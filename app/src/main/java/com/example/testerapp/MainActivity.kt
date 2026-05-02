@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.Html
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -806,6 +807,10 @@ fun MainScreen(
 
     LaunchedEffect(Unit) { observeTrackedApps { tracked = it } }
     LaunchedEffect(refreshTick) { usageAccess = UsageReader.hasUsageAccess(context) }
+
+    BackHandler(enabled = screen == AppScreen.SETTINGS) {
+        screen = AppScreen.HOME
+    }
 
     FluidBackdrop(
         modifier = Modifier.fillMaxSize(),
