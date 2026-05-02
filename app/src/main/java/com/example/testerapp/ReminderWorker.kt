@@ -19,12 +19,13 @@ class ReminderWorker(
 
     override suspend fun doWork(): Result {
         val items = AppDatabase.get(applicationContext).appDao().observeAll().first()
+            .filterNot { it.isArchived }
         if (items.isEmpty() || !UsageReader.hasUsageAccess(applicationContext)) return Result.success()
 
         val hasIncomplete = items.any { item ->
             val today = UsageReader.todayUsageMinutes(applicationContext, item.packageName)
             val day = SeriesCalculator.currentDay(item)
-            day < 14 && today == 0L
+            item.completedAtMillis == null && day < 14 && today == 0L
         }
         if (hasIncomplete) {
             val autoTour = applicationContext

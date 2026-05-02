@@ -13,4 +13,13 @@ interface AppDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(item: TrackedApp)
+
+    @Query("UPDATE TrackedApp SET isArchived = :archived WHERE packageName = :packageName")
+    suspend fun setArchived(packageName: String, archived: Boolean)
+
+    @Query("UPDATE TrackedApp SET completedAtMillis = :completedAtMillis WHERE packageName = :packageName")
+    suspend fun setCompleted(packageName: String, completedAtMillis: Long?)
+
+    @Query("DELETE FROM TrackedApp WHERE packageName = :packageName")
+    suspend fun delete(packageName: String)
 }

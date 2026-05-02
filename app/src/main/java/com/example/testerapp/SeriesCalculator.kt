@@ -7,6 +7,7 @@ import kotlin.math.min
 
 object SeriesCalculator {
     fun currentDay(item: TrackedApp, now: Long = System.currentTimeMillis()): Int {
+        if (item.completedAtMillis != null) return 14
         val diff = (now - item.createdAtMillis).coerceAtLeast(0L)
         val passedDays = TimeUnit.MILLISECONDS.toDays(diff).toInt()
         return min(14, item.startDayIndex + passedDays)

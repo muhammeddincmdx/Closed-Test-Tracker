@@ -8,5 +8,7 @@ data class TrackedApp(
     @PrimaryKey val packageName: String,
     val appLabel: String,
     val startDayIndex: Int = 1,
-    val createdAtMillis: Long = System.currentTimeMillis()
+    val createdAtMillis: Long = System.currentTimeMillis(),
+    val isArchived: Boolean = false,
+    val completedAtMillis: Long? = null
 )
