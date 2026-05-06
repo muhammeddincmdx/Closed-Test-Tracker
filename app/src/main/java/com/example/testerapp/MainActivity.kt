@@ -65,6 +65,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -93,6 +94,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -121,6 +123,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -870,8 +873,8 @@ fun MainScreen(
         selectedPackageName = null
     }
 
-    val activeTracked = tracked.filter { !it.isArchived && SeriesCalculator.currentDay(it) < 14 && it.completedAtMillis == null }
-    val completedTracked = tracked.filter { !it.isArchived && (SeriesCalculator.currentDay(it) >= 14 || it.completedAtMillis != null) }
+    val activeTracked = tracked.filter { !it.isArchived && it.completedAtMillis == null }
+    val completedTracked = tracked.filter { !it.isArchived && it.completedAtMillis != null }
     val filteredTracked = when (homeFilter) {
         HomeFilter.ACTIVE -> activeTracked
         HomeFilter.COMPLETED -> completedTracked
@@ -1409,7 +1412,7 @@ private fun AppUsageCard(
     val day = SeriesCalculator.currentDay(item)
     val today = usageDays.firstOrNull { it.isToday }?.minutes ?: 0L
     val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
-    val completed = item.completedAtMillis != null || day >= 14
+    val completed = item.completedAtMillis != null
 
     Column(
         modifier = Modifier
@@ -1483,7 +1486,7 @@ private fun AppUsageCard(
                     when {
                         item.isArchived -> text(language, "Arşiv", "Archive")
                         completed -> text(language, "Tamam", "Done")
-                        else -> "$day/14"
+                        else -> "$day"
                     },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                     fontWeight = FontWeight.SemiBold,
@@ -1523,7 +1526,7 @@ private fun DetailPage(
     val today = usageDays.firstOrNull { it.isToday }?.minutes ?: 0L
     val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
     val max = usageDays.maxOfOrNull { it.minutes } ?: 0L
-    val completed = item.completedAtMillis != null || day >= 14
+    val completed = item.completedAtMillis != null
     val detailListState = remember(item.packageName) { LazyListState() }
 
     LaunchedEffect(item.packageName) {
@@ -1569,7 +1572,7 @@ private fun DetailPage(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatTile(text(language, "Gün", "Day"), "$day/14", Modifier.weight(1f))
+                        StatTile(text(language, "Gün", "Day"), "$day", Modifier.weight(1f))
                         StatTile(text(language, "Bugün", "Today"), "$today dk", Modifier.weight(1f))
                         StatTile(text(language, "Toplam", "Total"), "$total dk", Modifier.weight(1f))
                     }
@@ -1579,25 +1582,6 @@ private fun DetailPage(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         DetailActionButton(text(language, "Uygulamayı aç", "Open app"), Icons.Rounded.OpenInNew, onOpenApp, Modifier.weight(1f))
                         DetailActionButton(text(language, "Play Store", "Play Store"), Icons.Rounded.ShoppingBag, onOpenPlayStore, Modifier.weight(1f))
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
-                shape = RoundedCornerShape(30.dp),
-                border = BorderStroke(1.dp, separatorColor()),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text(language, "Gün gün kullanım", "Daily usage"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    usageDays.forEach { dayItem ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text(language, "Gün ${dayItem.index} - ${dayItem.label}", "Day ${dayItem.index} - ${dayItem.label}"))
-                            Text(if (dayItem.isFuture) "-" else "${dayItem.minutes} dk", fontWeight = FontWeight.SemiBold)
-                        }
                     }
                 }
             }
@@ -1622,6 +1606,25 @@ private fun DetailPage(
                         onArchive
                     )
                     DetailActionButton(text(language, "Listeden sil", "Delete"), Icons.Rounded.Delete, onDelete)
+                }
+            }
+        }
+
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
+                shape = RoundedCornerShape(30.dp),
+                border = BorderStroke(1.dp, separatorColor()),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text(language, "Gün gün kullanım", "Daily usage"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    usageDays.forEach { dayItem ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(text(language, "Gün ${dayItem.index} - ${dayItem.label}", "Day ${dayItem.index} - ${dayItem.label}"))
+                            Text(if (dayItem.isFuture) "-" else "${dayItem.minutes} dk", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                 }
             }
         }
@@ -1696,8 +1699,8 @@ private fun DaySetupDialog(
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit
 ) {
-    var dayText by remember(target) { mutableStateOf(target.initialDay.coerceIn(1, 14).toString()) }
-    val selectedDay = dayText.toIntOrNull()?.coerceIn(1, 14) ?: 1
+    var sliderValue by remember(target) { mutableFloatStateOf(target.initialDay.coerceIn(1, 365).toFloat()) }
+    val selectedDay = sliderValue.roundToInt().coerceIn(1, 365)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1706,25 +1709,37 @@ private fun DaySetupDialog(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(target.label, fontWeight = FontWeight.Bold)
                 Text(text(language, "Bugün bu uygulama testinin kaçıncı günü?", "Which test day is this app on today?"))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(1, 2, 3, 7, 14).forEach { day ->
-                        FilterChip(
-                            selected = selectedDay == day,
-                            onClick = { dayText = day.toString() },
-                            label = { Text(day.toString()) },
-                            shape = RoundedCornerShape(16.dp),
-                            colors = glassChipColors()
+                Surface(
+                    color = rowSurfaceColor(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, separatorColor())
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text(language, "Seçili gün", "Selected day"),
+                            color = secondaryTextColor(),
+                            fontWeight = FontWeight.Medium
                         )
+                        Text(
+                            selectedDay.toString(),
+                            fontSize = 34.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Slider(
+                            value = sliderValue,
+                            onValueChange = { sliderValue = it },
+                            valueRange = 1f..365f
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(1, 7, 14, 30, 60).forEach { day ->
+                                ThemeChip(day.toString(), selectedDay == day) {
+                                    sliderValue = day.toFloat()
+                                }
+                            }
+                        }
                     }
                 }
-                OutlinedTextField(
-                    value = dayText,
-                    onValueChange = { dayText = it.filter(Char::isDigit).take(2) },
-                    label = { Text(text(language, "Gün (1-14)", "Day (1-14)")) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = glassTextFieldColors()
-                )
             }
         },
         confirmButton = {

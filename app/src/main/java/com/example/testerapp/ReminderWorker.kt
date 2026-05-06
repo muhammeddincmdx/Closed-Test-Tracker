@@ -25,16 +25,16 @@ class ReminderWorker(
         val hasIncomplete = items.any { item ->
             val today = UsageReader.todayUsageMinutes(applicationContext, item.packageName)
             val day = SeriesCalculator.currentDay(item)
-            item.completedAtMillis == null && day < 14 && today == 0L
+            item.completedAtMillis == null && day >= 14 && today == 0L
         }
         if (hasIncomplete) {
             val autoTour = applicationContext
                 .getSharedPreferences("tester_settings", Context.MODE_PRIVATE)
                 .getBoolean("auto_tour", false)
             if (autoTour) {
-                showNotification("2 dk test turu", "Bugün açılmayan uygulamalar var. Uygulamayı açıp test turunu manuel başlat.")
+                showNotification("Test serisi devam ediyor", "14. günü geçen ama tamamlanmayan uygulamalar var. Bugün kullanılmayanları kontrol et.")
             } else {
-                showNotification("Günlük seri devam ediyor", "Bugün henüz kullanılmayan test uygulaması var.")
+                showNotification("Test serisi uyarısı", "14. günü geçen ama tamamlanmayan test uygulaması var.")
             }
         }
         return Result.success()

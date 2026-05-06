@@ -2,12 +2,9 @@ package com.example.testerapp
 
 import com.example.testerapp.data.TrackedApp
 import java.util.Calendar
-import kotlin.math.min
 
 object SeriesCalculator {
     fun currentDay(item: TrackedApp, now: Long = System.currentTimeMillis()): Int {
-        if (item.completedAtMillis != null) return 14
-
         val createdDayStart = startOfDayMillis(item.createdAtMillis)
         val nowDayStart = startOfDayMillis(now)
 
@@ -16,7 +13,7 @@ object SeriesCalculator {
                 .toInt()
                 .coerceAtLeast(0)
 
-        return min(14, item.startDayIndex + passedDays)
+        return item.startDayIndex + passedDays
     }
 
     private fun startOfDayMillis(timeMillis: Long): Long {
