@@ -499,7 +499,8 @@ private data class UsageDay(
 private data class DaySetupTarget(
     val packageName: String,
     val label: String,
-    val initialDay: Int
+    val initialDay: Int,
+    val isNew: Boolean
 )
 
 private fun text(
@@ -618,6 +619,12 @@ class MainActivity : ComponentActivity() {
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
                         }
                     },
+                    onUpdateStartDay = { pkg, day ->
+                        lifecycleScope.launch {
+                            db.appDao().updateStartDay(pkg, day.coerceAtLeast(1))
+                            ClosedTestWidgetProvider.updateAll(this@MainActivity)
+                        }
+                    },
                     onArchiveApp = { pkg, archived ->
                         lifecycleScope.launch {
                             db.appDao().setArchived(pkg, archived)
@@ -627,6 +634,12 @@ class MainActivity : ComponentActivity() {
                     onMarkCompleted = { pkg ->
                         lifecycleScope.launch {
                             db.appDao().setCompleted(pkg, System.currentTimeMillis())
+                            ClosedTestWidgetProvider.updateAll(this@MainActivity)
+                        }
+                    },
+                    onResetSeries = { pkg ->
+                        lifecycleScope.launch {
+                            db.appDao().resetSeries(pkg, System.currentTimeMillis(), 1)
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
                         }
                     },
@@ -809,8 +822,10 @@ fun MainScreen(
     onOpenUsageSettings: () -> Unit,
     observeTrackedApps: ((List<TrackedApp>) -> Unit) -> Unit,
     onTrackApp: (String, String, Int) -> Unit,
+    onUpdateStartDay: (String, Int) -> Unit,
     onArchiveApp: (String, Boolean) -> Unit,
     onMarkCompleted: (String) -> Unit,
+    onResetSeries: (String) -> Unit,
     onDeleteApp: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -1028,9 +1043,11 @@ fun MainScreen(
                                 daySetupTarget = DaySetupTarget(
                                     packageName = item.packageName,
                                     label = item.appLabel,
-                                    initialDay = SeriesCalculator.currentDay(item)
+                                    initialDay = SeriesCalculator.currentDay(item),
+                                    isNew = false
                                 )
                             },
+                            onRestartSeries = { onResetSeries(item.packageName) },
                             onMarkCompleted = { onMarkCompleted(item.packageName) },
                             onArchive = {
                                 onArchiveApp(item.packageName, !item.isArchived)
@@ -1135,7 +1152,7 @@ fun MainScreen(
             onDismiss = { showPicker = false },
             onPick = { app ->
                 showPicker = false
-                daySetupTarget = DaySetupTarget(app.packageName, app.label, 1)
+                daySetupTarget = DaySetupTarget(app.packageName, app.label, 1, true)
             }
         )
     }
@@ -1146,7 +1163,11 @@ fun MainScreen(
             target = target,
             onDismiss = { daySetupTarget = null },
             onConfirm = { day ->
-                onTrackApp(target.packageName, target.label, day)
+                if (target.isNew) {
+                    onTrackApp(target.packageName, target.label, day)
+                } else {
+                    onUpdateStartDay(target.packageName, day)
+                }
                 daySetupTarget = null
             }
         )
@@ -1412,7 +1433,6 @@ private fun AppUsageCard(
     val day = SeriesCalculator.currentDay(item)
     val today = usageDays.firstOrNull { it.isToday }?.minutes ?: 0L
     val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
-    val completed = item.completedAtMillis != null
 
     Column(
         modifier = Modifier
@@ -1485,8 +1505,7 @@ private fun AppUsageCard(
                 Text(
                     when {
                         item.isArchived -> text(language, "Arşiv", "Archive")
-                        completed -> text(language, "Tamam", "Done")
-                        else -> "$day"
+                        else -> "$day/14"
                     },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                     fontWeight = FontWeight.SemiBold,
@@ -1518,6 +1537,7 @@ private fun DetailPage(
     onOpenApp: () -> Unit,
     onOpenPlayStore: () -> Unit,
     onEditDay: () -> Unit,
+    onRestartSeries: () -> Unit,
     onMarkCompleted: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit
@@ -1526,7 +1546,6 @@ private fun DetailPage(
     val today = usageDays.firstOrNull { it.isToday }?.minutes ?: 0L
     val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
     val max = usageDays.maxOfOrNull { it.minutes } ?: 0L
-    val completed = item.completedAtMillis != null
     val detailListState = remember(item.packageName) { LazyListState() }
 
     LaunchedEffect(item.packageName) {
@@ -1541,6 +1560,7 @@ private fun DetailPage(
     ) {
         item {
             Card(
+                modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
                 shape = RoundedCornerShape(32.dp),
                 border = BorderStroke(1.dp, separatorColor()),
@@ -1572,7 +1592,7 @@ private fun DetailPage(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatTile(text(language, "Gün", "Day"), "$day", Modifier.weight(1f))
+                        StatTile(text(language, "Gün", "Day"), "$day/14", Modifier.weight(1f))
                         StatTile(text(language, "Bugün", "Today"), "$today dk", Modifier.weight(1f))
                         StatTile(text(language, "Toplam", "Total"), "$total dk", Modifier.weight(1f))
                     }
@@ -1589,6 +1609,7 @@ private fun DetailPage(
 
         item {
             Card(
+                modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
                 shape = RoundedCornerShape(30.dp),
                 border = BorderStroke(1.dp, separatorColor()),
@@ -1596,9 +1617,14 @@ private fun DetailPage(
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(text(language, "Yönetim", "Manage"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(
+                        text(language, "Seri bitirmeden sayaç devam eder.", "The streak keeps running until you finish."),
+                        color = secondaryTextColor()
+                    )
                     DetailActionButton(text(language, "Günü ayarla", "Set day"), Icons.Rounded.Refresh, onEditDay)
-                    if (!completed) {
-                        DetailActionButton(text(language, "Tamamlananlara taşı", "Mark completed"), Icons.Rounded.Done, onMarkCompleted)
+                    DetailActionButton(text(language, "Bugünü sıfırla", "Restart today"), Icons.Rounded.Refresh, onRestartSeries)
+                    if (item.completedAtMillis == null) {
+                        DetailActionButton(text(language, "Bitir", "Finish"), Icons.Rounded.Done, onMarkCompleted)
                     }
                     DetailActionButton(
                         if (item.isArchived) text(language, "Arşivden çıkar", "Restore") else text(language, "Arşivle", "Archive"),
@@ -1612,6 +1638,7 @@ private fun DetailPage(
 
         item {
             Card(
+                modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
                 shape = RoundedCornerShape(30.dp),
                 border = BorderStroke(1.dp, separatorColor()),

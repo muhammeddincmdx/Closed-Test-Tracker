@@ -5,8 +5,9 @@ import java.util.Calendar
 
 object SeriesCalculator {
     fun currentDay(item: TrackedApp, now: Long = System.currentTimeMillis()): Int {
+        val effectiveNow = item.completedAtMillis?.coerceAtMost(now) ?: now
         val createdDayStart = startOfDayMillis(item.createdAtMillis)
-        val nowDayStart = startOfDayMillis(now)
+        val nowDayStart = startOfDayMillis(effectiveNow)
 
         val passedDays =
             ((nowDayStart - createdDayStart) / (24L * 60L * 60L * 1000L))

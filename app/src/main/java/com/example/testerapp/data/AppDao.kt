@@ -20,6 +20,18 @@ interface AppDao {
     @Query("UPDATE TrackedApp SET completedAtMillis = :completedAtMillis WHERE packageName = :packageName")
     suspend fun setCompleted(packageName: String, completedAtMillis: Long?)
 
+    @Query("UPDATE TrackedApp SET startDayIndex = :startDayIndex WHERE packageName = :packageName")
+    suspend fun updateStartDay(packageName: String, startDayIndex: Int)
+
+    @Query("""
+        UPDATE TrackedApp
+        SET createdAtMillis = :createdAtMillis,
+            startDayIndex = :startDayIndex,
+            completedAtMillis = NULL
+        WHERE packageName = :packageName
+    """)
+    suspend fun resetSeries(packageName: String, createdAtMillis: Long, startDayIndex: Int)
+
     @Query("DELETE FROM TrackedApp WHERE packageName = :packageName")
     suspend fun delete(packageName: String)
 }
