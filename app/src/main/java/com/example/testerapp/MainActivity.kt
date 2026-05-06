@@ -1,8 +1,9 @@
-package com.example.testerapp
+﻿package com.example.testerapp
 
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
@@ -25,8 +26,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -39,11 +42,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -61,11 +66,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -75,35 +80,38 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Help
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
-import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Done
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.Help
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -115,6 +123,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.testerapp.data.AppDatabase
 import com.example.testerapp.data.TrackedApp
 import java.net.HttpURLConnection
@@ -123,7 +134,9 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -135,6 +148,8 @@ enum class AppTheme { FRESH, OCEAN, SUNSET }
 enum class AppThemeMode { SYSTEM, LIGHT, DARK }
 enum class AppScreen { HOME, SETTINGS, DETAIL }
 enum class HomeFilter { ACTIVE, COMPLETED, ALL }
+private enum class OverviewFilter { ALL, ACTIVE, COMPLETED, ARCHIVED }
+private enum class DetailViewMode { GRAPH, TEXT }
 
 private const val PREFS_NAME = "tester_settings"
 private const val KEY_LANGUAGE = "language"
@@ -394,17 +409,17 @@ private fun secondaryTextColor(): Color {
 private fun glassTextFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedTextColor = MaterialTheme.colorScheme.onSurface,
     unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-    focusedLabelColor = MaterialTheme.colorScheme.primary,
+    focusedLabelColor = secondaryTextColor(),
     unfocusedLabelColor = secondaryTextColor(),
-    focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+    focusedLeadingIconColor = MaterialTheme.colorScheme.onSurface,
     unfocusedLeadingIconColor = secondaryTextColor(),
-    focusedTrailingIconColor = MaterialTheme.colorScheme.primary,
+    focusedTrailingIconColor = MaterialTheme.colorScheme.onSurface,
     unfocusedTrailingIconColor = secondaryTextColor(),
-    cursorColor = MaterialTheme.colorScheme.primary,
-    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.76f),
+    cursorColor = MaterialTheme.colorScheme.onSurface,
+    focusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.28f else 0.20f),
     unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.26f else 0.18f),
-    focusedContainerColor = glassVariantColor(),
-    unfocusedContainerColor = glassVariantColor()
+    focusedContainerColor = rowSurfaceColor(),
+    unfocusedContainerColor = rowSurfaceColor()
 )
 
 @Composable
@@ -538,13 +553,13 @@ private fun languageLabel(language: AppLanguage): String {
 
 private fun languageFlag(language: AppLanguage): String {
     return when (language) {
-        AppLanguage.TR -> "🇹🇷"
-        AppLanguage.EN -> "🇬🇧"
-        AppLanguage.FR -> "🇫🇷"
-        AppLanguage.ES -> "🇪🇸"
-        AppLanguage.ZH -> "🇨🇳"
-        AppLanguage.HI -> "🇮🇳"
-        AppLanguage.RU -> "🇷🇺"
+        AppLanguage.TR -> "\uD83C\uDDF9\uD83C\uDDF7"
+        AppLanguage.EN -> "\uD83C\uDDEC\uD83C\uDDE7"
+        AppLanguage.FR -> "\uD83C\uDDEB\uD83C\uDDF7"
+        AppLanguage.ES -> "\uD83C\uDDEA\uD83C\uDDF8"
+        AppLanguage.ZH -> "\uD83C\uDDE8\uD83C\uDDF3"
+        AppLanguage.HI -> "\uD83C\uDDEE\uD83C\uDDF3"
+        AppLanguage.RU -> "\uD83C\uDDFA\uD83C\uDDF8"
     }
 }
 
@@ -556,6 +571,17 @@ class MainActivity : ComponentActivity() {
     private val db by lazy { AppDatabase.get(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val themeMode = runCatching {
+            AppThemeMode.valueOf(prefs.getString(KEY_THEME_MODE, AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name)
+        }.getOrDefault(AppThemeMode.SYSTEM)
+        val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val darkTheme = when (themeMode) {
+            AppThemeMode.SYSTEM -> systemDark
+            AppThemeMode.LIGHT -> false
+            AppThemeMode.DARK -> true
+        }
+        setTheme(if (darkTheme) R.style.Theme_TesterApp_Dark else R.style.Theme_TesterApp_Light)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -613,7 +639,7 @@ class MainActivity : ComponentActivity() {
                                 TrackedApp(
                                     packageName = pkg,
                                     appLabel = label,
-                                    startDayIndex = day.coerceIn(1, 14)
+                                    startDayIndex = day.coerceIn(1, 20)
                                 )
                             )
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
@@ -621,7 +647,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onUpdateStartDay = { pkg, day ->
                         lifecycleScope.launch {
-                            db.appDao().updateStartDay(pkg, day.coerceAtLeast(1))
+                            db.appDao().updateStartDay(pkg, day.coerceIn(1, 20))
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
                         }
                     },
@@ -634,12 +660,6 @@ class MainActivity : ComponentActivity() {
                     onMarkCompleted = { pkg ->
                         lifecycleScope.launch {
                             db.appDao().setCompleted(pkg, System.currentTimeMillis())
-                            ClosedTestWidgetProvider.updateAll(this@MainActivity)
-                        }
-                    },
-                    onResetSeries = { pkg ->
-                        lifecycleScope.launch {
-                            db.appDao().resetSeries(pkg, System.currentTimeMillis(), 1)
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
                         }
                     },
@@ -825,7 +845,6 @@ fun MainScreen(
     onUpdateStartDay: (String, Int) -> Unit,
     onArchiveApp: (String, Boolean) -> Unit,
     onMarkCompleted: (String) -> Unit,
-    onResetSeries: (String) -> Unit,
     onDeleteApp: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -841,11 +860,11 @@ fun MainScreen(
     var showPicker by remember { mutableStateOf(false) }
     var screen by remember { mutableStateOf(AppScreen.HOME) }
     var homeFilter by remember { mutableStateOf(HomeFilter.ACTIVE) }
-    var autoTourEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_AUTO_TOUR, false)) }
     var reminderHour by remember { mutableIntStateOf(prefs.getInt(KEY_REMINDER_HOUR, 20)) }
     var daySetupTarget by remember { mutableStateOf<DaySetupTarget?>(null) }
     var deleteTarget by remember { mutableStateOf<TrackedApp?>(null) }
     var selectedPackageName by remember { mutableStateOf<String?>(null) }
+    var showOverviewSheet by remember { mutableStateOf(false) }
     var usageAccess by remember { mutableStateOf(UsageReader.hasUsageAccess(context)) }
     var refreshTick by remember { mutableIntStateOf(0) }
     val homeListState = remember { LazyListState() }
@@ -879,6 +898,24 @@ fun MainScreen(
 
     LaunchedEffect(Unit) { observeTrackedApps { tracked = it } }
     LaunchedEffect(refreshTick) { usageAccess = UsageReader.hasUsageAccess(context) }
+    LaunchedEffect(usageAccess) {
+        while (true) {
+            delay(20_000)
+            refreshTick++
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshTick++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
     LaunchedEffect(screen) {
         if (screen == AppScreen.HOME) homeListState.scrollToItem(0)
     }
@@ -894,6 +931,11 @@ fun MainScreen(
         HomeFilter.ACTIVE -> activeTracked
         HomeFilter.COMPLETED -> completedTracked
         HomeFilter.ALL -> tracked
+    }
+    val missingTodayApps = if (usageAccess) {
+        activeTracked.filter { UsageReader.todayUsageMinutes(context, it.packageName) == 0L }
+    } else {
+        emptyList()
     }
     val usedTodayCount = if (usageAccess) activeTracked.count { UsageReader.todayUsageMinutes(context, it.packageName) > 0L } else 0
     val missingTodayCount = if (usageAccess) {
@@ -939,7 +981,7 @@ fun MainScreen(
                             screen = AppScreen.HOME
                             selectedPackageName = null
                         }) {
-                            Icon(Icons.Rounded.ArrowBack, contentDescription = text(language, "Geri", "Back"))
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = text(language, "Geri", "Back"))
                         }
                     }
                 },
@@ -988,7 +1030,6 @@ fun MainScreen(
                         appTheme = appTheme,
                         themeMode = themeMode,
                         darkTheme = darkTheme,
-                        autoTourEnabled = autoTourEnabled,
                         reminderHour = reminderHour,
                         onLanguageChange = {
                             language = it
@@ -996,10 +1037,6 @@ fun MainScreen(
                         },
                         onThemeChange = onThemeChange,
                         onThemeModeChange = onThemeModeChange,
-                        onAutoTourChange = {
-                            autoTourEnabled = it
-                            prefs.edit().putBoolean(KEY_AUTO_TOUR, it).apply()
-                        },
                         onReminderHourChange = { hour ->
                             reminderHour = hour
                             prefs.edit()
@@ -1047,7 +1084,6 @@ fun MainScreen(
                                     isNew = false
                                 )
                             },
-                            onRestartSeries = { onResetSeries(item.packageName) },
                             onMarkCompleted = { onMarkCompleted(item.packageName) },
                             onArchive = {
                                 onArchiveApp(item.packageName, !item.isArchived)
@@ -1076,8 +1112,17 @@ fun MainScreen(
                                 missingTodayCount = missingTodayCount,
                                 completedCount = completedTracked.size,
                                 todayMinutes = todayTotalMinutes,
-                                onRefresh = { refreshTick++ }
+                                onRefresh = { refreshTick++ },
+                                onOpenOverview = { showOverviewSheet = true }
                             )
+                        }
+                        if (usageAccess && missingTodayApps.isNotEmpty()) {
+                            item {
+                                MissingTodayCard(
+                                    language = language,
+                                    apps = missingTodayApps
+                                )
+                            }
                         }
                         item {
                             HomeFilterBar(
@@ -1157,6 +1202,21 @@ fun MainScreen(
         )
     }
 
+    if (showOverviewSheet) {
+        AppOverviewSheet(
+            language = language,
+            tracked = tracked,
+            usageAccess = usageAccess,
+            playPublishers = playPublishers,
+            onDismiss = { showOverviewSheet = false },
+            onSelect = { packageName ->
+                selectedPackageName = packageName
+                screen = AppScreen.DETAIL
+                showOverviewSheet = false
+            }
+        )
+    }
+
     daySetupTarget?.let { target ->
         DaySetupDialog(
             language = language,
@@ -1215,46 +1275,80 @@ private fun DashboardHeader(
     missingTodayCount: Int,
     completedCount: Int,
     todayMinutes: Long,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onOpenOverview: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
+        border = BorderStroke(1.dp, separatorColor()),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Text(
-            text(language, "Takip özeti", "Tracking summary"),
-            color = secondaryTextColor(),
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            StatTile(text(language, "Kullanılan", "Used"), usedTodayCount.toString(), Modifier.weight(1f))
-            StatTile(text(language, "Eksik", "Missing"), missingTodayCount.toString(), Modifier.weight(1f))
-            StatTile(text(language, "Tamam", "Done"), completedCount.toString(), Modifier.weight(1f))
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            StatTile(text(language, "Bugün", "Today"), "$todayMinutes dk", Modifier.weight(1f))
-            Surface(
-                color = glassColor(strong = true),
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = RoundedCornerShape(22.dp),
-                border = glassBorder(),
-                modifier = Modifier.clickable(onClick = onRefresh)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text(text(language, "Yenile", "Refresh"), fontWeight = FontWeight.Bold)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text(language, "Takip özeti", "Tracking summary"),
+                        color = secondaryTextColor(),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text(language, "Uygulama özetleri", "App summaries"),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        color = rowSurfaceColor(),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, separatorColor()),
+                        modifier = Modifier.clickable(onClick = onOpenOverview)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(text(language, "Özetler", "Summaries"), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Surface(
+                        color = rowSurfaceColor(),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, separatorColor()),
+                        modifier = Modifier.clickable(onClick = onRefresh)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.padding(10.dp).size(18.dp)
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryStatChip(text(language, "Kullanılan", "Used"), usedTodayCount.toString(), Modifier.weight(1f))
+                SummaryStatChip(text(language, "Eksik", "Missing"), missingTodayCount.toString(), Modifier.weight(1f))
+                SummaryStatChip(text(language, "Tamam", "Done"), completedCount.toString(), Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryStatChip(text(language, "Bugün", "Today"), "$todayMinutes dk", Modifier.weight(1f))
+                SummaryStatChip(text(language, "Seri", "Streak"), "14+", Modifier.weight(1f))
             }
         }
     }
@@ -1303,6 +1397,25 @@ private fun StatTile(label: String, value: String, modifier: Modifier = Modifier
     ) {
         Text(label, color = secondaryTextColor())
         Text(value, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun SummaryStatChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = rowSurfaceColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, separatorColor())
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(label, color = secondaryTextColor(), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(value, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -1537,7 +1650,6 @@ private fun DetailPage(
     onOpenApp: () -> Unit,
     onOpenPlayStore: () -> Unit,
     onEditDay: () -> Unit,
-    onRestartSeries: () -> Unit,
     onMarkCompleted: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit
@@ -1546,6 +1658,8 @@ private fun DetailPage(
     val today = usageDays.firstOrNull { it.isToday }?.minutes ?: 0L
     val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
     val max = usageDays.maxOfOrNull { it.minutes } ?: 0L
+    val hasUsageData = usageDays.any { !it.isFuture && it.minutes > 0L }
+    var viewMode by remember(item.packageName) { mutableStateOf(DetailViewMode.GRAPH) }
     val detailListState = remember(item.packageName) { LazyListState() }
 
     LaunchedEffect(item.packageName) {
@@ -1600,7 +1714,7 @@ private fun DetailPage(
                     UsageBars(usageDays, max)
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DetailActionButton(text(language, "Uygulamayı aç", "Open app"), Icons.Rounded.OpenInNew, onOpenApp, Modifier.weight(1f))
+                        DetailActionButton(text(language, "Uygulamayı aç", "Open app"), Icons.AutoMirrored.Rounded.OpenInNew, onOpenApp, Modifier.weight(1f))
                         DetailActionButton(text(language, "Play Store", "Play Store"), Icons.Rounded.ShoppingBag, onOpenPlayStore, Modifier.weight(1f))
                     }
                 }
@@ -1611,27 +1725,78 @@ private fun DetailPage(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
-                shape = RoundedCornerShape(30.dp),
+                shape = RoundedCornerShape(28.dp),
                 border = BorderStroke(1.dp, separatorColor()),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text(language, "Yönetim", "Manage"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text(language, "Yönetim", "Manage"), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text(
+                            text(language, if (item.completedAtMillis == null) "Canlı" else "Tamamlandı", if (item.completedAtMillis == null) "Live" else "Done"),
+                            color = secondaryTextColor(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                     Text(
                         text(language, "Seri bitirmeden sayaç devam eder.", "The streak keeps running until you finish."),
-                        color = secondaryTextColor()
+                        color = secondaryTextColor(),
+                        fontSize = 12.sp
                     )
-                    DetailActionButton(text(language, "Günü ayarla", "Set day"), Icons.Rounded.Refresh, onEditDay)
-                    DetailActionButton(text(language, "Bugünü sıfırla", "Restart today"), Icons.Rounded.Refresh, onRestartSeries)
-                    if (item.completedAtMillis == null) {
-                        DetailActionButton(text(language, "Bitir", "Finish"), Icons.Rounded.Done, onMarkCompleted)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        DetailActionButton(
+                            text(language, "Günü ayarla", "Set day"),
+                            Icons.Rounded.Refresh,
+                            onEditDay,
+                            modifier = Modifier.weight(1f),
+                            compact = true
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        if (item.completedAtMillis == null) {
+                            DetailActionButton(
+                                text(language, "Bitir", "Finish"),
+                                Icons.Rounded.Done,
+                                onMarkCompleted,
+                                modifier = Modifier.weight(1f),
+                                compact = true
+                            )
+                        } else {
+                            Surface(
+                                modifier = Modifier.weight(1f),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                                contentColor = MaterialTheme.colorScheme.onSurface,
+                                shape = RoundedCornerShape(18.dp),
+                                border = BorderStroke(1.dp, separatorColor())
+                            ) {
+                                Text(
+                                    text(language, "Tamamlandı", "Done"),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                        DetailActionButton(
+                            if (item.isArchived) text(language, "Çıkar", "Restore") else text(language, "Arşiv", "Archive"),
+                            Icons.Rounded.Archive,
+                            onArchive,
+                            modifier = Modifier.weight(1f),
+                            compact = true
+                        )
                     }
                     DetailActionButton(
-                        if (item.isArchived) text(language, "Arşivden çıkar", "Restore") else text(language, "Arşivle", "Archive"),
-                        Icons.Rounded.Archive,
-                        onArchive
+                        text(language, "Listeden sil", "Delete"),
+                        Icons.Rounded.Delete,
+                        onDelete,
+                        modifier = Modifier.fillMaxWidth(),
+                        compact = true
                     )
-                    DetailActionButton(text(language, "Listeden sil", "Delete"), Icons.Rounded.Delete, onDelete)
                 }
             }
         }
@@ -1645,12 +1810,35 @@ private fun DetailPage(
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text(language, "Gün gün kullanım", "Daily usage"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    usageDays.forEach { dayItem ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text(language, "Gün ${dayItem.index} - ${dayItem.label}", "Day ${dayItem.index} - ${dayItem.label}"))
-                            Text(if (dayItem.isFuture) "-" else "${dayItem.minutes} dk", fontWeight = FontWeight.SemiBold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text(language, "14 günlük özet", "14-day summary"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ThemeChip("Grafik", viewMode == DetailViewMode.GRAPH) { viewMode = DetailViewMode.GRAPH }
+                            ThemeChip("Yazılı", viewMode == DetailViewMode.TEXT) { viewMode = DetailViewMode.TEXT }
                         }
+                    }
+                    Text(
+                        text(language, "İstersen çizgi grafik, istersen yazılı özet görürsün.", "You can switch between a line chart and a written summary."),
+                        color = secondaryTextColor(),
+                        fontSize = 12.sp
+                    )
+                    if (!hasUsageData) {
+                        EmptyDetailState(
+                            title = text(language, "Henüz kullanım verisi yok", "No usage data yet"),
+                            body = text(
+                                language,
+                                if (today == 0L) "Bu uygulama için bugün veri görünmüyor. Kullanım izni açıksa uygulamayı açıp biraz bekle." else "Bu seri için henüz anlamlı kullanım verisi oluşmadı.",
+                                if (today == 0L) "There is no data for today yet. If usage access is on, open the app and wait a bit." else "No meaningful usage data has been collected for this streak yet."
+                            )
+                        )
+                    } else if (viewMode == DetailViewMode.GRAPH) {
+                        UsageTimelineGrid(days = usageDays)
+                    } else {
+                        UsageTextSummary(days = usageDays)
                     }
                 }
             }
@@ -1663,22 +1851,29 @@ private fun DetailActionButton(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
     Surface(
         modifier = modifier.clickable(onClick = onClick),
         color = rowSurfaceColor(),
         contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(if (compact) 18.dp else 20.dp),
         border = BorderStroke(1.dp, separatorColor())
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = if (compact) 12.dp else 14.dp, vertical = if (compact) 10.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp)
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
-            Text(label, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(icon, contentDescription = null, modifier = Modifier.size(if (compact) 18.dp else 20.dp))
+            Text(
+                label,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = if (compact) 13.sp else 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -1690,21 +1885,21 @@ private fun UsageBars(days: List<UsageDay>, maxMinutes: Long) {
     val futureColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
     val emptyColor = MaterialTheme.colorScheme.surfaceVariant
     Row(
-        modifier = Modifier.fillMaxWidth().height(58.dp),
+        modifier = Modifier.fillMaxWidth().height(86.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.Bottom
     ) {
         days.forEach { day ->
-            val barHeight = if (maxMinutes == 0L) 8 else (8 + (day.minutes * 46 / maxMinutes)).toInt()
+            val barHeight = if (maxMinutes == 0L) 8 else (8 + (day.minutes * 64 / maxMinutes)).toInt()
             Box(
-                modifier = Modifier.weight(1f).height(58.dp),
+                modifier = Modifier.weight(1f).height(86.dp),
                 contentAlignment = Alignment.BottomCenter
             ) {
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .height(barHeight.dp)
-                        .clip(RoundedCornerShape(4.dp))
+                        .clip(RoundedCornerShape(5.dp))
                         .background(
                             when {
                                 day.isToday -> todayColor
@@ -1719,6 +1914,7 @@ private fun UsageBars(days: List<UsageDay>, maxMinutes: Long) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DaySetupDialog(
     language: AppLanguage,
@@ -1726,59 +1922,277 @@ private fun DaySetupDialog(
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit
 ) {
-    var sliderValue by remember(target) { mutableFloatStateOf(target.initialDay.coerceIn(1, 365).toFloat()) }
-    val selectedDay = sliderValue.roundToInt().coerceIn(1, 365)
+    val dayRange = 1..20
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val initialDay = target.initialDay.coerceIn(dayRange.first, dayRange.last)
+    val selectedDay by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val center = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+            val centered = layoutInfo.visibleItemsInfo.minByOrNull { item ->
+                abs((item.offset + item.size / 2) - center)
+            }
+            (centered?.index?.plus(1) ?: initialDay).coerceIn(dayRange.first, dayRange.last)
+        }
+    }
 
-    AlertDialog(
+    LaunchedEffect(target) {
+        scope.launch {
+            listState.scrollToItem((initialDay - 1).coerceIn(0, dayRange.last - 1), scrollOffset = 62)
+        }
+    }
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(text(language, "Test günü", "Test day")) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(target.label, fontWeight = FontWeight.Bold)
-                Text(text(language, "Bugün bu uygulama testinin kaçıncı günü?", "Which test day is this app on today?"))
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+        containerColor = canvasColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        scrimColor = Color.Black.copy(alpha = 0.48f),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .size(width = 54.dp, height = 5.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.22f else 0.16f))
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Surface(
                     color = rowSurfaceColor(),
                     contentColor = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(20.dp),
                     border = BorderStroke(1.dp, separatorColor())
                 ) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text(language, "Seçili gün", "Selected day"),
-                            color = secondaryTextColor(),
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            selectedDay.toString(),
-                            fontSize = 34.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Slider(
-                            value = sliderValue,
-                            onValueChange = { sliderValue = it },
-                            valueRange = 1f..365f
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(1, 7, 14, 30, 60).forEach { day ->
-                                ThemeChip(day.toString(), selectedDay == day) {
-                                    sliderValue = day.toFloat()
+                    Icon(
+                        Icons.Rounded.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.padding(11.dp).size(22.dp)
+                    )
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text(language, "Test günü", "Test day"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp
+                    )
+                    Text(
+                        target.label,
+                        color = secondaryTextColor(),
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Surface(
+                    color = rowSurfaceColor(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, separatorColor()),
+                    modifier = Modifier.clickable(onClick = onDismiss)
+                ) {
+                    Text(
+                        text(language, "Kapat", "Close"),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Text(
+                text(language, "Bugün bu uygulama testinin kaçıncı günü? 1 ile 20 arasında seç.", "Which test day is this app on today? Choose between 1 and 20."),
+                color = secondaryTextColor()
+            )
+
+            Surface(
+                color = rowSurfaceColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(26.dp),
+                border = BorderStroke(1.dp, separatorColor())
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text(language, "Seçili gün", "Selected day"),
+                                color = secondaryTextColor(),
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                selectedDay.toString(),
+                                fontSize = 40.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.14f else 0.10f),
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            shape = RoundedCornerShape(18.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.24f else 0.18f)
+                            )
+                        ) {
+                            Text(
+                                text(language, "1 - 20", "1 - 20"),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Surface(
+                        color = canvasColor(),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(24.dp),
+                        border = BorderStroke(1.dp, separatorColor())
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(196.dp)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(
+                                            if (isDarkScheme()) Color(0xFF22252C) else Color(0xFFF6F4EE),
+                                            if (isDarkScheme()) Color(0xFF171A20) else Color(0xFFECE7DE),
+                                            if (isDarkScheme()) Color(0xFF20242B) else Color(0xFFE2DCCF)
+                                        )
+                                    )
+                                )
+                        ) {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(vertical = 66.dp)
+                            ) {
+                                items(dayRange.toList()) { day ->
+                                    val selected = day == selectedDay
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(44.dp)
+                                            .clickable {
+                                                scope.launch {
+                                                    listState.scrollToItem((day - 1).coerceIn(0, dayRange.last - 1), scrollOffset = 62)
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = day.toString(),
+                                            fontSize = if (selected) 25.sp else 18.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (selected) {
+                                                MaterialTheme.colorScheme.onSurface
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.44f)
+                                            },
+                                            modifier = Modifier.graphicsLayer {
+                                                scaleX = if (selected) 1.08f else 0.92f
+                                                scaleY = if (selected) 1.08f else 0.92f
+                                            }
+                                        )
+                                    }
                                 }
                             }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .background(
+                                        Brush.verticalGradient(
+                                            listOf(
+                                                canvasColor().copy(alpha = 0.90f),
+                                                Color.Transparent
+                                            )
+                                        )
+                                    )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .background(
+                                        Brush.verticalGradient(
+                                            listOf(
+                                                Color.Transparent,
+                                                canvasColor().copy(alpha = 0.90f)
+                                            )
+                                        )
+                                    )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .padding(horizontal = 6.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(
+                                                MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.14f else 0.10f),
+                                                MaterialTheme.colorScheme.tertiary.copy(alpha = if (isDarkScheme()) 0.11f else 0.08f),
+                                                MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.14f else 0.10f)
+                                            )
+                                        )
+                                    )
+                                    .border(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.24f else 0.18f),
+                                        RoundedCornerShape(18.dp)
+                                    )
+                            )
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onConfirm(selectedDay) },
-                shape = RoundedCornerShape(8.dp)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text(text(language, "Kaydet", "Save"))
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(text(language, "İptal", "Cancel"))
+                }
+                Button(
+                    onClick = { onConfirm(selectedDay) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(text(language, "Kaydet", "Save"))
+                }
             }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(text(language, "İptal", "Cancel")) } }
-    )
+        }
+    }
 }
 
 @Composable
@@ -1788,12 +2202,10 @@ private fun SettingsPage(
     appTheme: AppTheme,
     themeMode: AppThemeMode,
     darkTheme: Boolean,
-    autoTourEnabled: Boolean,
     reminderHour: Int,
     onLanguageChange: (AppLanguage) -> Unit,
     onThemeChange: (AppTheme) -> Unit,
     onThemeModeChange: (AppThemeMode) -> Unit,
-    onAutoTourChange: (Boolean) -> Unit,
     onReminderHourChange: (Int) -> Unit,
     onSendMail: () -> Unit,
     onDonate: () -> Unit
@@ -1810,7 +2222,7 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
-                    title = text(language, "Dil", "Language", "Langue", "Idioma", "语言", "भाषा", "Язык")
+                    title = text(language, "Dil", "Language", "Langue", "Idioma", "??", "????", "????")
                 ) {
                     LanguageDropdown(language = language, onLanguageChange = onLanguageChange)
                 }
@@ -1820,16 +2232,16 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Palette, contentDescription = null) },
-                    title = text(language, "Görünüm", "Appearance", "Apparence", "Apariencia", "外观", "दिखावट", "Внешний вид")
+                    title = text(language, "Görünüm", "Appearance", "Apparence", "Apariencia", "??", "??????", "??????? ???")
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ThemeChip(text(language, "Sistem", "System", "Système", "Sistema", "系统", "सिस्टम", "Система"), themeMode == AppThemeMode.SYSTEM) {
+                        ThemeChip(text(language, "Sistem", "System", "Système", "Sistema", "??", "??????", "???????"), themeMode == AppThemeMode.SYSTEM) {
                             onThemeModeChange(AppThemeMode.SYSTEM)
                         }
-                        ThemeChip(text(language, "Açık", "Light", "Clair", "Claro", "浅色", "लाइट", "Светлая"), themeMode == AppThemeMode.LIGHT) {
+                        ThemeChip(text(language, "Açık", "Light", "Clair", "Claro", "??", "????", "???????"), themeMode == AppThemeMode.LIGHT) {
                             onThemeModeChange(AppThemeMode.LIGHT)
                         }
-                        ThemeChip(text(language, "Koyu", "Dark", "Sombre", "Oscuro", "深色", "डार्क", "Тёмная"), themeMode == AppThemeMode.DARK) {
+                        ThemeChip(text(language, "Koyu", "Dark", "Sombre", "Oscuro", "??", "?????", "??????"), themeMode == AppThemeMode.DARK) {
                             onThemeModeChange(AppThemeMode.DARK)
                         }
                     }
@@ -1840,35 +2252,6 @@ private fun SettingsPage(
                             if (themeMode == AppThemeMode.SYSTEM) "Following device theme." else if (darkTheme) "Dark theme is active." else "Light theme is active."
                         )
                     )
-                }
-            }
-        }
-        item {
-            SettingsCard {
-                SettingsSection(
-                    icon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-                    title = text(language, "2 dk otomatik tur", "2 min auto tour", "Tour auto 2 min", "Tour auto 2 min", "2分钟自动轮巡", "2 मिनट ऑटो टूर", "Авто-тур 2 мин")
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text(
-                                language,
-                                "Açıkken günlük kullanılmayan uygulamalar için daha belirgin hatırlatma verir. Android güvenliği nedeniyle uygulamaları sessizce kapatamaz.",
-                                "When enabled, reminders are stronger for apps not used today. Android security does not allow silently closing other apps.",
-                                "Activé, les rappels sont renforcés. Android ne permet pas de fermer d'autres apps en silence.",
-                                "Activado, los recordatorios son más claros. Android no permite cerrar otras apps en silencio.",
-                                "开启后会加强提醒。Android 不允许静默关闭其他应用。",
-                                "चालू होने पर रिमाइंडर मजबूत होंगे। Android दूसरी ऐप्स को चुपचाप बंद करने नहीं देता।",
-                                "При включении напоминания заметнее. Android не разрешает тихо закрывать другие приложения."
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Switch(checked = autoTourEnabled, onCheckedChange = onAutoTourChange)
-                    }
                 }
             }
         }
@@ -1908,20 +2291,49 @@ private fun SettingsPage(
         item {
             SettingsCard {
                 SettingsSection(
-                    icon = { Icon(Icons.Rounded.Help, contentDescription = null) },
-                    title = text(language, "Yardım", "Help", "Aide", "Ayuda", "帮助", "मदद", "Помощь")
+                    icon = { Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null) },
+                    title = text(language, "Yardım", "Help", "Aide", "Ayuda", "??", "???", "??????")
                 ) {
                     Text(
                         text(
                             language,
-                            "Uygulama seç, test gününü gir ve kullanım erişimi izniyle gün gün süreleri takip et. Kart ikonuna dokunarak ilgili uygulamayı açabilirsin.",
-                            "Pick apps, enter the current test day, and track daily minutes with Usage Access. Tap an app icon to open that app.",
-                            "Choisis les apps, indique le jour de test et suis les minutes avec l'accès d'utilisation.",
-                            "Elige apps, introduce el día de prueba y sigue los minutos con acceso de uso.",
-                            "选择应用，输入测试天数，并通过使用情况权限跟踪每日分钟数。",
-                            "ऐप चुनें, टेस्ट दिन दर्ज करें और Usage Access से दैनिक मिनट देखें।",
-                            "Выберите приложения, укажите день теста и отслеживайте минуты через Usage Access."
+                            "Uygulama seç, test gününü gir ve kullanım erişimi izniyle günlük süreleri takip et. Kart ikonuna dokunarak ilgili uygulamayı açabilirsin.",
+                            "Pick apps, enter the current test day, and track daily minutes with Usage Access. Tap an app icon to open that app."
                         )
+                    )
+                }
+            }
+        }
+        item {
+            SettingsCard {
+                SettingsSection(
+                    icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                    title = text(language, "Kullanım şartları", "Terms of use")
+                ) {
+                    Text(
+                        text(
+                            language,
+                            "Bu uygulama kapalı test takibi için hazırlanmıştır. Veriler cihazda yerel olarak saklanır; otomatik üçüncü taraf aktarımı yoktur. Play Store sayfası ve sistem kullanım izni dışında veri okunmaz.",
+                            "This app is made for closed-test tracking. Data is stored locally on the device; there is no automatic third-party upload. Nothing outside the Play Store page and system usage access is read."
+                        ),
+                        color = secondaryTextColor()
+                    )
+                }
+            }
+        }
+        item {
+            SettingsCard {
+                SettingsSection(
+                    icon = { Icon(Icons.Rounded.ShoppingBag, contentDescription = null) },
+                    title = text(language, "Gizlilik politikası", "Privacy policy")
+                ) {
+                    Text(
+                        text(
+                            language,
+                            "Toplanan bilgiler seçilen uygulama listesi, test günü, arşiv durumu ve cihaz kullanım istatistikleridir. Bunlar yalnızca yerel veritabanında tutulur. Destek e-postası ve bağış bağlantısı uygulama dışındaki servislere yönlendirir.",
+                            "Collected data is limited to the selected app list, test day, archive state, and device usage statistics. Everything stays in the local database. Support mail and donation links redirect to external services."
+                        ),
+                        color = secondaryTextColor()
                     )
                 }
             }
@@ -1930,7 +2342,7 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsAction(
                     icon = { Icon(Icons.Rounded.Email, contentDescription = null) },
-                    title = text(language, "Destek e-postası", "Support email", "E-mail support", "Correo soporte", "支持邮箱", "सपोर्ट ईमेल", "Почта поддержки"),
+                    title = text(language, "Destek e-postası", "Support email", "E-mail support", "Correo soporte", "????", "?????? ????", "????? ?????????"),
                     subtitle = SUPPORT_MAIL,
                     onClick = onSendMail
                 )
@@ -1940,7 +2352,7 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsAction(
                     icon = { Icon(Icons.Rounded.Favorite, contentDescription = null) },
-                    title = text(language, "Bağış / Kahve ısmarla", "Donate / Buy me a coffee", "Don / Offrir un café", "Donar / Invitar un café", "捐赠 / 请我喝咖啡", "दान / कॉफी", "Донат / кофе"),
+                    title = text(language, "Bağış / Kahve ısmarla", "Donate / Buy me a coffee", "Don / Offrir un café", "Donar / Invitar un café", "?? / ?????", "??? / ????", "????? / ????"),
                     subtitle = DONATION_URL,
                     onClick = onDonate
                 )
@@ -1950,20 +2362,464 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-                    title = text(language, "Hakkında", "About", "À propos", "Acerca de", "关于", "के बारे में", "О приложении")
+                    title = text(language, "Hakkında", "About", "À propos", "Acerca de", "??", "?? ???? ???", "? ??????????")
                 ) {
                     Text(
                         text(
                             language,
                             "Closed Test Tracker v1.0\nMD Studio tarafından Google Play kapalı testlerini daha düzenli sürdürmek, test serilerini ve uygulama kullanım sürelerini gün gün takip etmek için geliştirildi.\n\nWeb/PWA kısayollarında süre tarayıcı paketine (Chrome, Samsung Internet vb.) yazılabilir; Android site bazlı süreyi uygulamalara vermez. Bu yüzden bazı web tarzı uygulamalar 0 dk görünebilir.\n\nPlay Store yayıncı adı Android tarafından cihaz içinden verilmez. Uygulama internet varsa Play Store sayfasından yayıncı adını okumayı dener; sayfa erişilemiyorsa yayıncı boş kalabilir.",
-                            "Closed Test Tracker v1.0\nDeveloped by MD Studio to keep Google Play closed tests more organized and track test streaks with daily app usage minutes.\n\nFor web/PWA shortcuts, time can be attributed to the browser package (Chrome, Samsung Internet, etc.). Android does not expose per-site usage time to apps, so some web-style apps may show 0 min.\n\nAndroid does not expose the Play Store publisher name locally. When internet is available, the app tries to read it from the Play Store page; if the page is unavailable, publisher may stay empty.",
-                            "Closed Test Tracker v1.0\nDéveloppé par MD Studio pour mieux organiser les tests fermés Google Play et suivre les séries avec les minutes d'utilisation.\n\nPour les raccourcis web/PWA, le temps peut être attribué au navigateur (Chrome, Samsung Internet, etc.). Android ne fournit pas le temps par site aux apps.\n\nAndroid ne fournit pas localement le nom de l'éditeur Play Store; l'app essaie de le lire depuis la page Play Store.",
-                            "Closed Test Tracker v1.0\nDesarrollado por MD Studio para organizar mejor las pruebas cerradas de Google Play y seguir rachas con minutos de uso.\n\nEn accesos web/PWA, el tiempo puede asignarse al navegador (Chrome, Samsung Internet, etc.). Android no entrega tiempo por sitio a las apps.\n\nAndroid no expone localmente el editor de Play Store; la app intenta leerlo desde la página de Play Store.",
-                            "Closed Test Tracker v1.0\n由 MD Studio 开发，用于更有序地维护 Google Play 封闭测试，并跟踪测试连续天数和应用使用分钟数。\n\n对于 Web/PWA 快捷方式，使用时长可能会计入浏览器包（Chrome、Samsung Internet 等）。Android 不向应用提供按网站统计的使用时长。\n\nAndroid 不在本地提供 Play Store 发布者名称；本应用会尝试从 Play Store 页面读取。",
-                            "Closed Test Tracker v1.0\nMD Studio द्वारा Google Play बंद टेस्ट को अधिक व्यवस्थित रखने और दैनिक ऐप उपयोग मिनटों के साथ टेस्ट स्ट्रीक ट्रैक करने के लिए बनाया गया।\n\nWeb/PWA शॉर्टकट में समय ब्राउज़र पैकेज (Chrome, Samsung Internet आदि) में जुड़ सकता है। Android ऐप्स को साइट-वार उपयोग समय नहीं देता।\n\nAndroid Play Store publisher नाम लोकल रूप से नहीं देता; ऐप इसे Play Store पेज से पढ़ने की कोशिश करता है।",
-                            "Closed Test Tracker v1.0\nРазработано MD Studio, чтобы удобнее вести закрытые тесты Google Play и отслеживать серии с минутами использования приложений.\n\nДля web/PWA-ярлыков время может записываться на пакет браузера (Chrome, Samsung Internet и т. д.). Android не передает приложениям статистику по отдельным сайтам.\n\nAndroid не раскрывает имя издателя Play Store локально; приложение пытается прочитать его со страницы Play Store."
+                            "Closed Test Tracker v1.0\nDeveloped by MD Studio to keep Google Play closed tests more organized and track test streaks with daily app usage minutes.\n\nFor web/PWA shortcuts, time can be attributed to the browser package (Chrome, Samsung Internet, etc.). Android does not expose per-site usage time to apps, so some web-style apps may show 0 min.\n\nAndroid does not expose the Play Store publisher name locally. When internet is available, the app tries to read it from the Play Store page; if the page is unavailable, publisher may stay empty."
                         )
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageTimelineGrid(days: List<UsageDay>) {
+    val visibleDays = days.filterNot { it.isFuture }
+    val maxMinutes = maxOf(1L, visibleDays.maxOfOrNull { it.minutes } ?: 0L)
+    val dark = isDarkScheme()
+    val gridColor = if (dark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
+    val lineColor = MaterialTheme.colorScheme.primary.copy(alpha = if (dark) 0.82f else 0.72f)
+    val pointColor = MaterialTheme.colorScheme.tertiary
+    val xLabels = visibleDays.mapIndexedNotNull { index, day ->
+        val step = maxOf(1, visibleDays.size / 4)
+        if (index % step == 0 || index == visibleDays.lastIndex) day.label else null
+    }
+    val yMarks = listOf(maxMinutes, maxMinutes / 2, 0L).distinct().sortedDescending()
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(
+                modifier = Modifier.width(42.dp).height(220.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                yMarks.forEach { mark ->
+                    Text(
+                        text = if (mark == 0L) "0" else mark.toString(),
+                        color = secondaryTextColor(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(220.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                if (dark) Color(0xFF1E2229) else Color(0xFFF7F5EF),
+                                if (dark) Color(0xFF171A20) else Color(0xFFF0EBDD)
+                            )
+                        )
+                    )
+                    .border(1.dp, separatorColor(), RoundedCornerShape(22.dp))
+            ) {
+                ComposeCanvas(modifier = Modifier.fillMaxSize()) {
+                    val leftPad = 18f
+                    val topPad = 18f
+                    val rightPad = 18f
+                    val bottomPad = 24f
+                    val chartWidth = size.width - leftPad - rightPad
+                    val chartHeight = size.height - topPad - bottomPad
+                    val stepX = if (visibleDays.size <= 1) 0f else chartWidth / (visibleDays.size - 1)
+
+                    yMarks.forEach { mark ->
+                        val ratio = mark.toFloat() / maxMinutes.toFloat()
+                        val y = topPad + (chartHeight * (1f - ratio))
+                        drawLine(
+                            color = gridColor,
+                            start = Offset(leftPad, y),
+                            end = Offset(size.width - rightPad, y),
+                            strokeWidth = 1.2f
+                        )
+                    }
+
+                    val plotted = visibleDays.mapIndexed { index, day ->
+                        val x = if (visibleDays.size <= 1) size.width / 2f else leftPad + (stepX * index)
+                        val ratio = if (day.isFuture) 0f else day.minutes.toFloat() / maxMinutes.toFloat()
+                        val y = topPad + (chartHeight * (1f - ratio.coerceIn(0f, 1f)))
+                        Offset(x, y)
+                    }
+
+                    for (i in 0 until plotted.lastIndex) {
+                        drawLine(
+                            color = lineColor,
+                            start = plotted[i],
+                            end = plotted[i + 1],
+                            strokeWidth = 5f
+                        )
+                    }
+
+                    plotted.forEachIndexed { index, point ->
+                        drawCircle(
+                            color = pointColor,
+                            radius = if (visibleDays[index].isToday) 7.5f else 5.5f,
+                            center = point
+                        )
+                        drawCircle(
+                            color = Color.White.copy(alpha = if (dark) 0.22f else 0.30f),
+                            radius = if (visibleDays[index].isToday) 4.2f else 3.0f,
+                            center = point
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 42.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            xLabels.forEach { label ->
+                Text(
+                    text = label,
+                    color = secondaryTextColor(),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UsageTextSummary(days: List<UsageDay>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        days.forEach { day ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = rowSurfaceColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, separatorColor())
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = day.label,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = if (day.isFuture) "-" else "Gün ${day.index}",
+                            color = secondaryTextColor(),
+                            fontSize = 12.sp
+                        )
+                    }
+                    Text(
+                        text = if (day.isFuture) "Bekleniyor" else "${day.minutes} dk",
+                        fontWeight = FontWeight.SemiBold,
+                        color = secondaryTextColor(),
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyDetailState(title: String, body: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = rowSurfaceColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, separatorColor())
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(body, color = secondaryTextColor(), fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun MissingTodayCard(language: AppLanguage, apps: List<TrackedApp>) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, separatorColor()),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text(language, "Bugün eksik olanlar", "Missing today"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("${apps.size}", color = secondaryTextColor(), fontWeight = FontWeight.Bold)
+            }
+            Text(
+                text(language, "Bugün açılmayan uygulamalar aşağıda.", "Apps not opened today are listed below."),
+                color = secondaryTextColor(),
+                fontSize = 12.sp
+            )
+            apps.take(3).forEach { app ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = app.appLabel,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = app.packageName,
+                        color = secondaryTextColor(),
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppOverviewSheet(
+    language: AppLanguage,
+    tracked: List<TrackedApp>,
+    usageAccess: Boolean,
+    playPublishers: Map<String, String>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(OverviewFilter.ALL) }
+    val activeCount = tracked.count { !it.isArchived && it.completedAtMillis == null }
+    val completedCount = tracked.count { !it.isArchived && it.completedAtMillis != null }
+    val archivedCount = tracked.count { it.isArchived }
+    val filteredTracked = remember(tracked, query, filter) {
+        val q = query.trim().lowercase()
+        tracked.filter { item ->
+            val matchesQuery = q.isBlank() || item.appLabel.lowercase().contains(q) || item.packageName.lowercase().contains(q)
+            val matchesFilter = when (filter) {
+                OverviewFilter.ALL -> true
+                OverviewFilter.ACTIVE -> !item.isArchived && item.completedAtMillis == null
+                OverviewFilter.COMPLETED -> !item.isArchived && item.completedAtMillis != null
+                OverviewFilter.ARCHIVED -> item.isArchived
+            }
+            matchesQuery && matchesFilter
+        }.sortedWith(
+            compareByDescending<TrackedApp> { !it.isArchived }
+                .thenByDescending { it.completedAtMillis == null }
+                .thenByDescending { SeriesCalculator.currentDay(it) }
+                .thenBy { it.appLabel.lowercase() }
+        )
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+        containerColor = canvasColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        scrimColor = Color.Black.copy(alpha = 0.48f),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .size(width = 54.dp, height = 5.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.22f else 0.16f))
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(text(language, "Uygulama özetleri", "App summaries"), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        text(language, "Tüm takip edilen uygulamalar ve seri günleri", "All tracked apps and streak days"),
+                        color = secondaryTextColor()
+                    )
+                }
+                Surface(
+                    color = rowSurfaceColor(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, separatorColor()),
+                    modifier = Modifier.clickable(onClick = onDismiss)
+                ) {
+                    Text("x", modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryStatChip(text(language, "Aktif", "Active"), activeCount.toString(), Modifier.weight(1f))
+                SummaryStatChip(text(language, "Tamam", "Done"), completedCount.toString(), Modifier.weight(1f))
+                SummaryStatChip(text(language, "Arşiv", "Archive"), archivedCount.toString(), Modifier.weight(1f))
+            }
+
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                label = { Text(text(language, "Ara", "Search")) },
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    focusedLabelColor = secondaryTextColor(),
+                    unfocusedLabelColor = secondaryTextColor(),
+                    focusedLeadingIconColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedLeadingIconColor = secondaryTextColor(),
+                    cursorColor = MaterialTheme.colorScheme.onSurface,
+                    focusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.26f else 0.18f),
+                    unfocusedBorderColor = separatorColor(),
+                    focusedContainerColor = rowSurfaceColor(),
+                    unfocusedContainerColor = rowSurfaceColor()
+                )
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SortChip(text(language, "Tümü", "All"), filter == OverviewFilter.ALL) { filter = OverviewFilter.ALL }
+                SortChip(text(language, "Aktif", "Active"), filter == OverviewFilter.ACTIVE) { filter = OverviewFilter.ACTIVE }
+                SortChip(text(language, "Tamam", "Done"), filter == OverviewFilter.COMPLETED) { filter = OverviewFilter.COMPLETED }
+                SortChip(text(language, "Arşiv", "Archive"), filter == OverviewFilter.ARCHIVED) { filter = OverviewFilter.ARCHIVED }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = rowSurfaceColor(), contentColor = MaterialTheme.colorScheme.onSurface),
+                border = BorderStroke(1.dp, separatorColor()),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                if (tracked.isEmpty()) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(text(language, "Henüz uygulama eklenmedi", "No apps added yet"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(text(language, "Özet ekranı, takip edilen uygulamalar eklenince dolacak.", "The summary screen fills up after apps are tracked."), color = secondaryTextColor())
+                    }
+                } else if (filteredTracked.isEmpty()) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(text(language, "Sonuç yok", "No results"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(
+                            text(language, "Aramayı değiştir ya da filtreyi genişlet.", "Change the search or widen the filter."),
+                            color = secondaryTextColor()
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 420.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        items(
+                            items = filteredTracked,
+                            key = { it.packageName }
+                        ) { item ->
+                            val day = SeriesCalculator.currentDay(item)
+                            val today = if (usageAccess) UsageReader.todayUsageMinutes(LocalContext.current, item.packageName) else 0L
+                            val publisher = playPublishers[item.packageName]
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(item.packageName) }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(if (item.isArchived) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.08f else 0.045f))
+                                )
+                                Spacer(Modifier.size(12.dp))
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(
+                                        item.appLabel,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 16.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = buildString {
+                                            append(if (item.isArchived) text(language, "Arşiv", "Archive") else "$day/14")
+                                            if (usageAccess) append("  •  ").append(today).append(" dk")
+                                            if (!publisher.isNullOrBlank()) append("  •  ").append(publisher)
+                                        },
+                                        color = secondaryTextColor(),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Surface(
+                                    color = when {
+                                        item.isArchived -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
+                                        item.completedAtMillis != null -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                        else -> rowSurfaceColor()
+                                    },
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = BorderStroke(1.dp, separatorColor())
+                                ) {
+                                    Text(
+                                        text = when {
+                                            item.isArchived -> text(language, "Arşiv", "Archive")
+                                            item.completedAtMillis != null -> text(language, "Tamam", "Done")
+                                            else -> "$day/14"
+                                        },
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                            CanvasDivider(Modifier.padding(start = 66.dp, end = 12.dp))
+                        }
+                    }
                 }
             }
         }
@@ -2003,14 +2859,18 @@ private fun LanguageDropdown(language: AppLanguage, onLanguageChange: (AppLangua
             label = { Text("Language") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
-                .menuAnchor()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
                 .fillMaxWidth(),
             singleLine = true,
             colors = glassTextFieldColors()
         )
         ExposedDropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(canvasColor()),
+            containerColor = canvasColor(),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp
         ) {
             AppLanguage.entries.forEach { item ->
                 DropdownMenuItem(
@@ -2064,15 +2924,26 @@ private fun SettingsDialog(
                         icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
                         title = text(language, "Dil", "Language")
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ThemeChip("Türkçe", language == AppLanguage.TR) { onLanguageChange(AppLanguage.TR) }
-                            ThemeChip("English", language == AppLanguage.EN) { onLanguageChange(AppLanguage.EN) }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ThemeChip("${languageFlag(AppLanguage.TR)} Türkçe", language == AppLanguage.TR) { onLanguageChange(AppLanguage.TR) }
+                                ThemeChip("${languageFlag(AppLanguage.EN)} English", language == AppLanguage.EN) { onLanguageChange(AppLanguage.EN) }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ThemeChip("${languageFlag(AppLanguage.FR)} Français", language == AppLanguage.FR) { onLanguageChange(AppLanguage.FR) }
+                                ThemeChip("${languageFlag(AppLanguage.ES)} Español", language == AppLanguage.ES) { onLanguageChange(AppLanguage.ES) }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ThemeChip("${languageFlag(AppLanguage.ZH)} 中文", language == AppLanguage.ZH) { onLanguageChange(AppLanguage.ZH) }
+                                ThemeChip("${languageFlag(AppLanguage.HI)} हिन्दी", language == AppLanguage.HI) { onLanguageChange(AppLanguage.HI) }
+                                ThemeChip("${languageFlag(AppLanguage.RU)} Русский", language == AppLanguage.RU) { onLanguageChange(AppLanguage.RU) }
+                            }
                         }
                     }
                 }
                 item {
                     SettingsSection(
-                        icon = { Icon(Icons.Rounded.Help, contentDescription = null) },
+                    icon = { Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null) },
                         title = text(language, "Yardım", "Help")
                     ) {
                         Text(
@@ -2162,7 +3033,7 @@ private fun SettingsAction(
             Text(title, fontWeight = FontWeight.Bold)
             Text(subtitle, color = secondaryTextColor(), style = MaterialTheme.typography.bodySmall)
         }
-        Icon(Icons.Rounded.OpenInNew, contentDescription = null, tint = secondaryTextColor())
+        Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, tint = secondaryTextColor())
     }
 }
 
@@ -2487,7 +3358,7 @@ private fun testUsageDays(
     item: TrackedApp,
     usageAccess: Boolean
 ): List<UsageDay> {
-    val formatter = SimpleDateFormat("dd.MM", Locale.getDefault())
+    val formatter = SimpleDateFormat("MM.dd", Locale.getDefault())
     val currentDay = SeriesCalculator.currentDay(item)
     return (1..14).map { testDay ->
         val offsetFromToday = testDay - currentDay
@@ -2506,3 +3377,15 @@ private fun testUsageDays(
         )
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
