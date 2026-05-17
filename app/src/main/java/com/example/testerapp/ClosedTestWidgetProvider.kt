@@ -1,4 +1,4 @@
-package com.example.testerapp
+package com.mdstudio.closedtesttracker
 
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
@@ -8,7 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.widget.RemoteViews
-import com.example.testerapp.data.AppDatabase
+import com.mdstudio.closedtesttracker.data.AppDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -30,19 +30,18 @@ class ClosedTestWidgetProvider : AppWidgetProvider() {
             if (ids.isEmpty()) return
             CoroutineScope(Dispatchers.IO).launch {
                 val items = AppDatabase.get(context).appDao().observeAll().first().filterNot { it.isArchived }
-                val active = items.count { SeriesCalculator.currentDay(it) < 14 && it.completedAtMillis == null }
-                val completed = items.count { SeriesCalculator.currentDay(it) >= 14 || it.completedAtMillis != null }
+                val active = items.count { it.completedAtMillis == null }
+                val completed = items.count { it.completedAtMillis != null }
                 val missing = if (UsageReader.hasUsageAccess(context)) {
                     items.count {
-                        SeriesCalculator.currentDay(it) < 14 &&
-                            it.completedAtMillis == null &&
+                        it.completedAtMillis == null &&
                             UsageReader.todayUsageMinutes(context, it.packageName) == 0L
                     }
                 } else {
                     active
                 }
                 val title = if (missing > 0) "$missing eksik test" else "Seri tamam"
-                val subtitle = "$active aktif • $completed tamam"
+                val subtitle = "$active aktif - $completed tamam"
 
                 ids.forEach { id ->
                     manager.updateAppWidget(id, buildViews(context, title, subtitle))

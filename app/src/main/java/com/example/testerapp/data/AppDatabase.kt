@@ -1,4 +1,4 @@
-package com.example.testerapp.data
+package com.mdstudio.closedtesttracker.data
 
 import android.content.Context
 import androidx.room.Database

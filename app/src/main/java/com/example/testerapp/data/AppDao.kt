@@ -1,4 +1,4 @@
-package com.example.testerapp.data
+package com.mdstudio.closedtesttracker.data
 
 import androidx.room.Dao
 import androidx.room.Insert
@@ -19,9 +19,6 @@ interface AppDao {
 
     @Query("UPDATE TrackedApp SET completedAtMillis = :completedAtMillis WHERE packageName = :packageName")
     suspend fun setCompleted(packageName: String, completedAtMillis: Long?)
-
-    @Query("UPDATE TrackedApp SET startDayIndex = :startDayIndex WHERE packageName = :packageName")
-    suspend fun updateStartDay(packageName: String, startDayIndex: Int)
 
     @Query("""
         UPDATE TrackedApp

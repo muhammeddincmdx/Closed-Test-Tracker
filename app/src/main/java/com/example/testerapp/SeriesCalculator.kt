@@ -1,6 +1,6 @@
-﻿package com.example.testerapp
+﻿package com.mdstudio.closedtesttracker
 
-import com.example.testerapp.data.TrackedApp
+import com.mdstudio.closedtesttracker.data.TrackedApp
 import java.util.Calendar
 import java.time.Instant
 import java.time.ZoneId
@@ -25,6 +25,13 @@ object SeriesCalculator {
             set(Calendar.MILLISECOND, 0)
             add(Calendar.DAY_OF_YEAR, offsetFromToday)
         }.timeInMillis
+    }
+
+    fun dayStartMillisForTestDay(item: TrackedApp, testDay: Int): Long {
+        val zone = ZoneId.systemDefault()
+        val createdDate = Instant.ofEpochMilli(item.createdAtMillis).atZone(zone).toLocalDate()
+        val targetDate = createdDate.plusDays((testDay - item.startDayIndex).toLong())
+        return targetDate.atStartOfDay(zone).toInstant().toEpochMilli()
     }
 }
 

@@ -6,15 +6,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.testerapp"
-    compileSdk = 34
+    namespace = "com.mdstudio.closedtesttracker"
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.testerapp"
+        applicationId = "com.mdstudio.closedtesttracker"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 35
+        versionCode = 6
+        versionName = "0.0.16.5.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -22,9 +22,22 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keystoreFile = rootProject.file("release-keystore.jks")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = "testerapp"
+                keyAlias = "testerapp"
+                keyPassword = "testerapp"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -71,3 +84,4 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.google.android.material:material:1.12.0")
 }
+

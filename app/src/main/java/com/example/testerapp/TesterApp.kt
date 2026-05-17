@@ -1,4 +1,4 @@
-package com.example.testerapp
+package com.mdstudio.closedtesttracker
 
 import android.app.Application
 

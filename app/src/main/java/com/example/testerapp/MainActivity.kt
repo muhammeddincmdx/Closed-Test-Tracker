@@ -1,4 +1,4 @@
-﻿package com.example.testerapp
+﻿package com.mdstudio.closedtesttracker
 
 import android.Manifest
 import android.app.Activity
@@ -70,6 +70,7 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -90,6 +91,7 @@ import androidx.compose.material.icons.rounded.Done
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ShoppingBag
@@ -103,7 +105,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -122,12 +126,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.testerapp.data.AppDatabase
-import com.example.testerapp.data.TrackedApp
+import com.mdstudio.closedtesttracker.data.AppDatabase
+import com.mdstudio.closedtesttracker.data.TrackedApp
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -144,23 +149,28 @@ import kotlinx.coroutines.withContext
 
 enum class SortMode { NAME, NEWEST, OLDEST }
 enum class AppLanguage { TR, EN, FR, ES, ZH, HI, RU }
+private enum class LanguageMode { SYSTEM, TR, EN, FR, ES, ZH, HI, RU }
 enum class AppTheme { FRESH, OCEAN, SUNSET }
 enum class AppThemeMode { SYSTEM, LIGHT, DARK }
 enum class AppScreen { HOME, SETTINGS, DETAIL }
-enum class HomeFilter { ACTIVE, COMPLETED, ALL }
+enum class HomeFilter { ACTIVE, COMPLETED, ARCHIVED, ALL }
+private enum class DateDisplayFormat { MONTH_DAY, DAY_MONTH }
 private enum class OverviewFilter { ALL, ACTIVE, COMPLETED, ARCHIVED }
 private enum class DetailViewMode { GRAPH, TEXT }
+private enum class ConfirmAction { FINISH, REACTIVATE, ARCHIVE, RESTORE }
 
 private const val PREFS_NAME = "tester_settings"
 private const val KEY_LANGUAGE = "language"
 private const val KEY_THEME = "theme"
 private const val KEY_THEME_MODE = "theme_mode"
+private const val KEY_DATE_FORMAT = "date_format"
 private const val KEY_AUTO_TOUR = "auto_tour"
 private const val KEY_REMINDER_HOUR = "reminder_hour"
 private const val KEY_REMINDER_MINUTE = "reminder_minute"
 private const val KEY_PLAY_PUBLISHER_PREFIX = "play_publisher_"
 private const val SUPPORT_MAIL = "mdstudiohelp@gmail.com"
 private const val DONATION_URL = "https://www.buymeacoffee.com/mdx0"
+private const val POLICY_URL = "https://sites.google.com/view/infomdstudio/documenter-pdf-scanner-viewer?"
 
 private fun appColors(theme: AppTheme, dark: Boolean) = if (dark) {
     darkColorScheme(
@@ -500,7 +510,8 @@ data class InstalledApp(
     val packageName: String,
     val label: String,
     val icon: Bitmap,
-    val firstInstallTime: Long
+    val firstInstallTime: Long,
+    val lastUpdateTime: Long
 )
 
 private data class UsageDay(
@@ -567,8 +578,120 @@ private fun languageDisplay(language: AppLanguage): String {
     return "${languageFlag(language)} ${languageLabel(language)}"
 }
 
+private fun systemLanguage(): AppLanguage {
+    return when (Locale.getDefault().language.lowercase(Locale.ROOT)) {
+        "tr" -> AppLanguage.TR
+        "fr" -> AppLanguage.FR
+        "es" -> AppLanguage.ES
+        "zh" -> AppLanguage.ZH
+        "hi" -> AppLanguage.HI
+        "ru" -> AppLanguage.RU
+        else -> AppLanguage.EN
+    }
+}
+
+private fun languageModeLabel(mode: LanguageMode): String {
+    return when (mode) {
+        LanguageMode.SYSTEM -> "🌐 System (${languageLabel(systemLanguage())})"
+        LanguageMode.TR -> languageDisplay(AppLanguage.TR)
+        LanguageMode.EN -> languageDisplay(AppLanguage.EN)
+        LanguageMode.FR -> languageDisplay(AppLanguage.FR)
+        LanguageMode.ES -> languageDisplay(AppLanguage.ES)
+        LanguageMode.ZH -> languageDisplay(AppLanguage.ZH)
+        LanguageMode.HI -> languageDisplay(AppLanguage.HI)
+        LanguageMode.RU -> languageDisplay(AppLanguage.RU)
+    }
+}
+
+private fun languageModeCode(mode: LanguageMode): String {
+    return when (mode) {
+        LanguageMode.SYSTEM -> "AUTO"
+        LanguageMode.TR -> "TR"
+        LanguageMode.EN -> "EN"
+        LanguageMode.FR -> "FR"
+        LanguageMode.ES -> "ES"
+        LanguageMode.ZH -> "ZH"
+        LanguageMode.HI -> "HI"
+        LanguageMode.RU -> "RU"
+    }
+}
+
+private fun languageModeTitle(mode: LanguageMode, uiLanguage: AppLanguage): String {
+    return when (mode) {
+        LanguageMode.SYSTEM -> text(
+            uiLanguage,
+            "Varsayılan sistem dili",
+            "System default",
+            "Langue du système",
+            "Idioma del sistema",
+            "系统默认",
+            "सिस्टम डिफ़ॉल्ट",
+            "Системный язык"
+        )
+        LanguageMode.TR -> "Türkçe"
+        LanguageMode.EN -> "English"
+        LanguageMode.FR -> "Français"
+        LanguageMode.ES -> "Español"
+        LanguageMode.ZH -> "中文"
+        LanguageMode.HI -> "हिन्दी"
+        LanguageMode.RU -> "Русский"
+    }
+}
+
+private fun languageModeSubtitle(mode: LanguageMode, uiLanguage: AppLanguage): String {
+    return when (mode) {
+        LanguageMode.SYSTEM -> text(
+            uiLanguage,
+            "Desteklenmeyen sistem dillerinde English kullanılır.",
+            "English is used when the system language is not supported.",
+            "English est utilisé si la langue du système n'est pas prise en charge.",
+            "Se usa English cuando el idioma del sistema no es compatible.",
+            "系统语言不受支持时将使用 English。",
+            "सिस्टम भाषा समर्थित नहीं होने पर English उपयोग होती है।",
+            "Если язык системы не поддерживается, используется English."
+        )
+        LanguageMode.TR -> text(uiLanguage, "Uygulama arayüzü Türkçe olur.", "The app interface switches to Turkish.", "L'interface passe en turc.", "La interfaz cambia a turco.", "应用界面将切换为土耳其语。", "ऐप इंटरफ़ेस तुर्की में होगा।", "Интерфейс приложения будет на турецком.")
+        LanguageMode.EN -> text(uiLanguage, "Uygulama arayüzü English olur.", "The app interface switches to English.", "L'interface passe en anglais.", "La interfaz cambia a inglés.", "应用界面将切换为英语。", "ऐप इंटरफ़ेस अंग्रेज़ी में होगा।", "Интерфейс приложения будет на английском.")
+        LanguageMode.FR -> text(uiLanguage, "Uygulama arayüzü Français olur.", "The app interface switches to French.", "L'interface passe en français.", "La interfaz cambia a francés.", "应用界面将切换为法语。", "ऐप इंटरफ़ेस फ़्रेंच में होगा।", "Интерфейс приложения будет на французском.")
+        LanguageMode.ES -> text(uiLanguage, "Uygulama arayüzü Español olur.", "The app interface switches to Spanish.", "L'interface passe en espagnol.", "La interfaz cambia a español.", "应用界面将切换为西班牙语。", "ऐप इंटरफ़ेस स्पेनिश में होगा।", "Интерфейс приложения будет на испанском.")
+        LanguageMode.ZH -> text(uiLanguage, "Uygulama arayüzü 中文 olur.", "The app interface switches to Chinese.", "L'interface passe en chinois.", "La interfaz cambia a chino.", "应用界面将切换为中文。", "ऐप इंटरफ़ेस चीनी में होगा।", "Интерфейс приложения будет на китайском.")
+        LanguageMode.HI -> text(uiLanguage, "Uygulama arayüzü हिन्दी olur.", "The app interface switches to Hindi.", "L'interface passe en hindi.", "La interfaz cambia a hindi.", "应用界面将切换为印地语。", "ऐप इंटरफ़ेस हिंदी में होगा।", "Интерфейс приложения будет на хинди.")
+        LanguageMode.RU -> text(uiLanguage, "Uygulama arayüzü Русский olur.", "The app interface switches to Russian.", "L'interface passe en russe.", "La interfaz cambia a ruso.", "应用界面将切换为俄语。", "ऐप इंटरफ़ेस रूसी में होगा।", "Интерфейс приложения будет на русском.")
+    }
+}
+
+private fun languageModeFieldLabel(mode: LanguageMode, uiLanguage: AppLanguage): String {
+    return if (mode == LanguageMode.SYSTEM) {
+        "${languageModeTitle(mode, uiLanguage)} (${languageLabel(systemLanguage())})"
+    } else {
+        languageModeTitle(mode, uiLanguage)
+    }
+}
+
+private fun LanguageMode.resolvedLanguage(): AppLanguage {
+    return when (this) {
+        LanguageMode.SYSTEM -> systemLanguage()
+        LanguageMode.TR -> AppLanguage.TR
+        LanguageMode.EN -> AppLanguage.EN
+        LanguageMode.FR -> AppLanguage.FR
+        LanguageMode.ES -> AppLanguage.ES
+        LanguageMode.ZH -> AppLanguage.ZH
+        LanguageMode.HI -> AppLanguage.HI
+        LanguageMode.RU -> AppLanguage.RU
+    }
+}
+
 class MainActivity : ComponentActivity() {
     private val db by lazy { AppDatabase.get(this) }
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            ReminderScheduler.schedule(this)
+        } else {
+            openNotificationSettings(this)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -585,11 +708,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(
-                Manifest.permission.POST_NOTIFICATIONS
-            )
-        }
+        requestNotificationPermissionIfNeeded()
 
         setContent {
             val prefs = remember { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
@@ -627,6 +746,7 @@ class MainActivity : ComponentActivity() {
                         themeMode = it
                         prefs.edit().putString(KEY_THEME_MODE, it.name).apply()
                     },
+                    onRequestNotificationPermission = { requestNotificationPermissionIfNeeded(force = true) },
                     onOpenUsageSettings = { openUsageSettings(this) },
                     observeTrackedApps = { onData ->
                         lifecycleScope.launch {
@@ -639,7 +759,8 @@ class MainActivity : ComponentActivity() {
                                 TrackedApp(
                                     packageName = pkg,
                                     appLabel = label,
-                                    startDayIndex = day.coerceIn(1, 20)
+                                    startDayIndex = day.coerceIn(1, 20),
+                                    createdAtMillis = SeriesCalculator.dayStartMillis(0)
                                 )
                             )
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
@@ -647,7 +768,11 @@ class MainActivity : ComponentActivity() {
                     },
                     onUpdateStartDay = { pkg, day ->
                         lifecycleScope.launch {
-                            db.appDao().updateStartDay(pkg, day.coerceIn(1, 20))
+                            db.appDao().resetSeries(
+                                packageName = pkg,
+                                createdAtMillis = SeriesCalculator.dayStartMillis(0),
+                                startDayIndex = day.coerceIn(1, 20)
+                            )
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
                         }
                     },
@@ -663,6 +788,13 @@ class MainActivity : ComponentActivity() {
                             ClosedTestWidgetProvider.updateAll(this@MainActivity)
                         }
                     },
+                    onReactivateApp = { pkg ->
+                        lifecycleScope.launch {
+                            db.appDao().setCompleted(pkg, null)
+                            db.appDao().setArchived(pkg, false)
+                            ClosedTestWidgetProvider.updateAll(this@MainActivity)
+                        }
+                    },
                     onDeleteApp = { pkg ->
                         lifecycleScope.launch {
                             db.appDao().delete(pkg)
@@ -673,10 +805,42 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun requestNotificationPermissionIfNeeded(force: Boolean = false) {
+        if (hasNotificationPermission(this)) {
+            ReminderScheduler.schedule(this)
+            if (force) openNotificationSettings(this)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 }
 
 private fun openUsageSettings(activity: Activity) {
     activity.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+}
+
+private fun hasNotificationPermission(context: android.content.Context): Boolean {
+    return Build.VERSION.SDK_INT < 33 ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun openNotificationSettings(context: android.content.Context) {
+    if (Build.VERSION.SDK_INT >= 26) {
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }
+            .onSuccess { return }
+    }
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = android.net.Uri.parse("package:${context.packageName}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(intent) }
 }
 
 private fun openTrackedApp(context: android.content.Context, packageName: String) {
@@ -705,10 +869,21 @@ private fun sendSupportMail(context: android.content.Context, language: AppLangu
 }
 
 private fun openDonationPage(context: android.content.Context) {
-    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(DONATION_URL)).apply {
+    openExternalPage(context, DONATION_URL)
+}
+
+private fun openPolicyPage(context: android.content.Context) {
+    openExternalPage(context, POLICY_URL)
+}
+
+private fun openExternalPage(context: android.content.Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        data = android.net.Uri.parse(url)
+        addCategory(Intent.CATEGORY_BROWSABLE)
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    runCatching { context.startActivity(intent) }
+    runCatching { context.startActivity(Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        .recoverCatching { context.startActivity(intent) }
 }
 
 private fun openPlayStorePage(context: android.content.Context, packageName: String) {
@@ -761,12 +936,34 @@ private fun installedApps(pm: PackageManager): List<InstalledApp> {
                     packageName = pkg,
                     label = label,
                     icon = pm.getApplicationIcon(info).toBitmap(),
-                    firstInstallTime = packageInfo.firstInstallTime
+                    firstInstallTime = packageInfo.firstInstallTime,
+                    lastUpdateTime = packageInfo.lastUpdateTime
                 )
             }.getOrNull()
         }
         .distinctBy { it.packageName }
         .toList()
+}
+
+private fun sortInstalledApps(apps: List<InstalledApp>, sortMode: SortMode): List<InstalledApp> {
+    return when (sortMode) {
+        SortMode.NAME -> apps.sortedWith(
+            compareBy<InstalledApp> { it.label.lowercase() }
+                .thenBy { it.packageName.lowercase() }
+        )
+        SortMode.NEWEST -> apps.sortedWith(
+            compareByDescending<InstalledApp> { it.firstInstallTime }
+                .thenByDescending { it.lastUpdateTime }
+                .thenBy { it.label.lowercase() }
+                .thenBy { it.packageName.lowercase() }
+        )
+        SortMode.OLDEST -> apps.sortedWith(
+            compareBy<InstalledApp> { it.firstInstallTime }
+                .thenBy { it.lastUpdateTime }
+                .thenBy { it.label.lowercase() }
+                .thenBy { it.packageName.lowercase() }
+        )
+    }
 }
 
 private suspend fun fetchPlayPublisherName(packageName: String): String? = withContext(Dispatchers.IO) {
@@ -839,35 +1036,51 @@ fun MainScreen(
     darkTheme: Boolean,
     onThemeChange: (AppTheme) -> Unit,
     onThemeModeChange: (AppThemeMode) -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onOpenUsageSettings: () -> Unit,
     observeTrackedApps: ((List<TrackedApp>) -> Unit) -> Unit,
     onTrackApp: (String, String, Int) -> Unit,
     onUpdateStartDay: (String, Int) -> Unit,
     onArchiveApp: (String, Boolean) -> Unit,
     onMarkCompleted: (String) -> Unit,
+    onReactivateApp: (String) -> Unit,
     onDeleteApp: (String) -> Unit
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE) }
-    var language by remember {
+    var languageMode by remember {
         mutableStateOf(
             runCatching {
-                AppLanguage.valueOf(prefs.getString(KEY_LANGUAGE, AppLanguage.TR.name) ?: AppLanguage.TR.name)
-            }.getOrDefault(AppLanguage.TR)
+                LanguageMode.valueOf(prefs.getString(KEY_LANGUAGE, LanguageMode.SYSTEM.name) ?: LanguageMode.SYSTEM.name)
+            }.recoverCatching {
+                LanguageMode.valueOf(
+                    AppLanguage.valueOf(prefs.getString(KEY_LANGUAGE, AppLanguage.EN.name) ?: AppLanguage.EN.name).name
+                )
+            }.getOrDefault(LanguageMode.SYSTEM)
         )
     }
+    val language = languageMode.resolvedLanguage()
     var tracked by remember { mutableStateOf(emptyList<TrackedApp>()) }
     var showPicker by remember { mutableStateOf(false) }
-    var screen by remember { mutableStateOf(AppScreen.HOME) }
-    var homeFilter by remember { mutableStateOf(HomeFilter.ACTIVE) }
+    var screen by rememberSaveable { mutableStateOf(AppScreen.HOME) }
+    var homeFilter by rememberSaveable { mutableStateOf(HomeFilter.ACTIVE) }
     var reminderHour by remember { mutableIntStateOf(prefs.getInt(KEY_REMINDER_HOUR, 20)) }
+    var dateFormat by remember {
+        mutableStateOf(
+            runCatching {
+                DateDisplayFormat.valueOf(prefs.getString(KEY_DATE_FORMAT, DateDisplayFormat.MONTH_DAY.name) ?: DateDisplayFormat.MONTH_DAY.name)
+            }.getOrDefault(DateDisplayFormat.MONTH_DAY)
+        )
+    }
     var daySetupTarget by remember { mutableStateOf<DaySetupTarget?>(null) }
     var deleteTarget by remember { mutableStateOf<TrackedApp?>(null) }
-    var selectedPackageName by remember { mutableStateOf<String?>(null) }
+    var confirmTarget by remember { mutableStateOf<Pair<ConfirmAction, TrackedApp>?>(null) }
+    var selectedPackageName by rememberSaveable { mutableStateOf<String?>(null) }
     var showOverviewSheet by remember { mutableStateOf(false) }
     var usageAccess by remember { mutableStateOf(UsageReader.hasUsageAccess(context)) }
+    var notificationAllowed by remember { mutableStateOf(hasNotificationPermission(context)) }
     var refreshTick by remember { mutableIntStateOf(0) }
-    val homeListState = remember { LazyListState() }
+    val homeListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     val apps = remember { installedApps(context.packageManager) }
     val playPublishers = remember { mutableStateMapOf<String, String>() }
     val playPublisherRequested = remember { mutableStateMapOf<String, Boolean>() }
@@ -897,7 +1110,10 @@ fun MainScreen(
     }
 
     LaunchedEffect(Unit) { observeTrackedApps { tracked = it } }
-    LaunchedEffect(refreshTick) { usageAccess = UsageReader.hasUsageAccess(context) }
+    LaunchedEffect(refreshTick) {
+        usageAccess = UsageReader.hasUsageAccess(context)
+        notificationAllowed = hasNotificationPermission(context)
+    }
     LaunchedEffect(usageAccess) {
         while (true) {
             delay(20_000)
@@ -916,10 +1132,6 @@ fun MainScreen(
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
-    LaunchedEffect(screen) {
-        if (screen == AppScreen.HOME) homeListState.scrollToItem(0)
-    }
-
     BackHandler(enabled = screen != AppScreen.HOME) {
         screen = AppScreen.HOME
         selectedPackageName = null
@@ -927,24 +1139,43 @@ fun MainScreen(
 
     val activeTracked = tracked.filter { !it.isArchived && it.completedAtMillis == null }
     val completedTracked = tracked.filter { !it.isArchived && it.completedAtMillis != null }
+    val archivedTracked = tracked.filter { it.isArchived }
     val filteredTracked = when (homeFilter) {
         HomeFilter.ACTIVE -> activeTracked
         HomeFilter.COMPLETED -> completedTracked
+        HomeFilter.ARCHIVED -> archivedTracked
         HomeFilter.ALL -> tracked
     }
+    val visibleUsagePackages = remember(tracked) {
+        tracked.filterNot { it.isArchived }.map { it.packageName }
+    }
+    val todayUsageMap by produceState(
+        initialValue = emptyMap<String, Long>(),
+        usageAccess,
+        refreshTick,
+        visibleUsagePackages
+    ) {
+        value = if (!usageAccess || visibleUsagePackages.isEmpty()) {
+            emptyMap()
+        } else {
+            withContext(Dispatchers.Default) {
+                UsageReader.todayUsageMinutesMap(context, visibleUsagePackages)
+            }
+        }
+    }
     val missingTodayApps = if (usageAccess) {
-        activeTracked.filter { UsageReader.todayUsageMinutes(context, it.packageName) == 0L }
+        activeTracked.filter { (todayUsageMap[it.packageName] ?: 0L) == 0L }
     } else {
         emptyList()
     }
-    val usedTodayCount = if (usageAccess) activeTracked.count { UsageReader.todayUsageMinutes(context, it.packageName) > 0L } else 0
+    val usedTodayCount = if (usageAccess) activeTracked.count { (todayUsageMap[it.packageName] ?: 0L) > 0L } else 0
     val missingTodayCount = if (usageAccess) {
-        activeTracked.count { UsageReader.todayUsageMinutes(context, it.packageName) == 0L }
+        activeTracked.count { (todayUsageMap[it.packageName] ?: 0L) == 0L }
     } else {
         activeTracked.size
     }
     val todayTotalMinutes = if (usageAccess) {
-        tracked.filterNot { it.isArchived }.sumOf { UsageReader.todayUsageMinutes(context, it.packageName) }
+        visibleUsagePackages.sumOf { todayUsageMap[it] ?: 0L }
     } else {
         0L
     }
@@ -976,7 +1207,7 @@ fun MainScreen(
                     }
                 },
                 navigationIcon = {
-                    if (screen != AppScreen.HOME) {
+                    if (screen == AppScreen.DETAIL) {
                         IconButton(onClick = {
                             screen = AppScreen.HOME
                             selectedPackageName = null
@@ -1031,8 +1262,11 @@ fun MainScreen(
                         themeMode = themeMode,
                         darkTheme = darkTheme,
                         reminderHour = reminderHour,
+                        dateFormat = dateFormat,
+                        notificationAllowed = notificationAllowed,
+                        languageMode = languageMode,
                         onLanguageChange = {
-                            language = it
+                            languageMode = it
                             prefs.edit().putString(KEY_LANGUAGE, it.name).apply()
                         },
                         onThemeChange = onThemeChange,
@@ -1045,8 +1279,14 @@ fun MainScreen(
                                 .apply()
                             ReminderScheduler.schedule(context)
                         },
+                        onDateFormatChange = { format ->
+                            dateFormat = format
+                            prefs.edit().putString(KEY_DATE_FORMAT, format.name).apply()
+                        },
+                        onRequestNotificationPermission = onRequestNotificationPermission,
                         onSendMail = { sendSupportMail(context, language) },
-                        onDonate = { openDonationPage(context) }
+                        onDonate = { openDonationPage(context) },
+                        onOpenPolicyPage = { openPolicyPage(context) }
                     )
                 }
 
@@ -1058,9 +1298,13 @@ fun MainScreen(
                         val appInfo = remember(apps, item.packageName) {
                             apps.firstOrNull { it.packageName == item.packageName }
                         }
-                        val usageDays = remember(item, usageAccess, refreshTick) {
-                            testUsageDays(context, item, usageAccess)
-                        }
+                        val usageDays = rememberUsageDaysAsync(
+                            context = context,
+                            item = item,
+                            usageAccess = usageAccess,
+                            refreshTick = refreshTick,
+                            dateFormat = dateFormat
+                        )
                         LaunchedEffect(item.packageName) {
                             ensurePlayPublisher(item.packageName)
                         }
@@ -1084,12 +1328,9 @@ fun MainScreen(
                                     isNew = false
                                 )
                             },
-                            onMarkCompleted = { onMarkCompleted(item.packageName) },
-                            onArchive = {
-                                onArchiveApp(item.packageName, !item.isArchived)
-                                screen = AppScreen.HOME
-                                selectedPackageName = null
-                            },
+                            onMarkCompleted = { confirmTarget = ConfirmAction.FINISH to item },
+                            onReactivate = { confirmTarget = ConfirmAction.REACTIVATE to item },
+                            onArchive = { confirmTarget = (if (item.isArchived) ConfirmAction.RESTORE else ConfirmAction.ARCHIVE) to item },
                             onDelete = { deleteTarget = item }
                         )
                     }
@@ -1130,6 +1371,7 @@ fun MainScreen(
                                 selected = homeFilter,
                                 activeCount = activeTracked.size,
                                 completedCount = completedTracked.size,
+                                archivedCount = archivedTracked.size,
                                 allCount = tracked.size,
                                 onSelect = { homeFilter = it }
                             )
@@ -1156,9 +1398,13 @@ fun MainScreen(
                                         val appInfo = remember(apps, item.packageName) {
                                             apps.firstOrNull { it.packageName == item.packageName }
                                         }
-                                        val usageDays = remember(item, usageAccess, refreshTick) {
-                                            testUsageDays(context, item, usageAccess)
-                                        }
+                                        val usageDays = rememberUsageDaysAsync(
+                                            context = context,
+                                            item = item,
+                                            usageAccess = usageAccess,
+                                            refreshTick = refreshTick,
+                                            dateFormat = dateFormat
+                                        )
                                         LaunchedEffect(item.packageName) {
                                             ensurePlayPublisher(item.packageName)
                                         }
@@ -1207,6 +1453,8 @@ fun MainScreen(
             language = language,
             tracked = tracked,
             usageAccess = usageAccess,
+            todayUsageMap = todayUsageMap,
+            installedAppsByPackage = apps.associateBy { it.packageName },
             playPublishers = playPublishers,
             onDismiss = { showOverviewSheet = false },
             onSelect = { packageName ->
@@ -1233,36 +1481,95 @@ fun MainScreen(
         )
     }
 
-    deleteTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text(text(language, "Uygulamayı sil", "Delete app")) },
-            text = {
-                Text(
-                    text(
-                        language,
-                        "${target.appLabel} listeden kaldırılsın mı? Kullanım geçmişi Android tarafında kalır, sadece takip kaydı silinir.",
-                        "Remove ${target.appLabel} from the list? Android usage history stays, only the tracking record is deleted."
-                    )
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onDeleteApp(target.packageName)
-                        deleteTarget = null
+    confirmTarget?.let { (action, target) ->
+        val title = when (action) {
+            ConfirmAction.FINISH -> text(language, "Testi bitir?", "Finish test?")
+            ConfirmAction.REACTIVATE -> text(language, "Tekrar aktif edilsin mi?", "Reactivate?")
+            ConfirmAction.ARCHIVE -> text(language, "Arşivlensin mi?", "Archive?")
+            ConfirmAction.RESTORE -> text(language, "Arşivden çıkarılsın mı?", "Restore?")
+        }
+        val message = when (action) {
+            ConfirmAction.FINISH -> text(
+                language,
+                "${target.appLabel} tamamlandı olarak işaretlenecek. İstersen daha sonra tekrar aktif edebilirsin.",
+                "${target.appLabel} will be marked as completed. You can reactivate it later."
+            )
+            ConfirmAction.REACTIVATE -> text(
+                language,
+                "${target.appLabel} tekrar aktif listeye alınacak ve seri sayacı devam edecek.",
+                "${target.appLabel} will return to the active list and the streak counter will continue."
+            )
+            ConfirmAction.ARCHIVE -> text(
+                language,
+                "${target.appLabel} arşive taşınacak. İstersen arşivden tekrar çıkarabilirsin.",
+                "${target.appLabel} will be moved to archive. You can restore it later."
+            )
+            ConfirmAction.RESTORE -> text(
+                language,
+                "${target.appLabel} arşivden çıkarılıp tekrar listede görünecek.",
+                "${target.appLabel} will be restored from archive and shown in the list again."
+            )
+        }
+        val confirmLabel = when (action) {
+            ConfirmAction.FINISH -> text(language, "Bitir", "Finish")
+            ConfirmAction.REACTIVATE -> text(language, "Aktif et", "Reactivate")
+            ConfirmAction.ARCHIVE -> text(language, "Arşivle", "Archive")
+            ConfirmAction.RESTORE -> text(language, "Arşivden çıkar", "Restore")
+        }
+
+        ConfirmationSheet(
+            title = title,
+            message = message,
+            confirmLabel = confirmLabel,
+            dismissLabel = text(language, "İptal", "Cancel"),
+            onDismiss = { confirmTarget = null },
+            onConfirm = {
+                when (action) {
+                    ConfirmAction.FINISH -> onMarkCompleted(target.packageName)
+                    ConfirmAction.REACTIVATE -> onReactivateApp(target.packageName)
+                    ConfirmAction.ARCHIVE -> onArchiveApp(target.packageName, true)
+                    ConfirmAction.RESTORE -> onArchiveApp(target.packageName, false)
+                }
+                when (action) {
+                    ConfirmAction.ARCHIVE -> {
+                        homeFilter = HomeFilter.ARCHIVED
                         screen = AppScreen.HOME
                         selectedPackageName = null
-                    },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(text(language, "Sil", "Delete"))
+                    }
+                    ConfirmAction.RESTORE -> {
+                        homeFilter = if (target.completedAtMillis == null) HomeFilter.ACTIVE else HomeFilter.COMPLETED
+                        screen = AppScreen.HOME
+                        selectedPackageName = null
+                    }
+                    ConfirmAction.REACTIVATE -> {
+                        homeFilter = HomeFilter.ACTIVE
+                        screen = AppScreen.HOME
+                        selectedPackageName = null
+                    }
+                    ConfirmAction.FINISH -> homeFilter = HomeFilter.COMPLETED
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) {
-                    Text(text(language, "İptal", "Cancel"))
-                }
+                confirmTarget = null
+            }
+        )
+    }
+
+    deleteTarget?.let { target ->
+        ConfirmationSheet(
+            title = text(language, "Uygulamayı sil", "Delete app"),
+            message = text(
+                language,
+                "${target.appLabel} listeden kaldırılsın mı? Kullanım geçmişi Android tarafında kalır, sadece takip kaydı silinir.",
+                "Remove ${target.appLabel} from the list? Android usage history stays, only the tracking record is deleted."
+            ),
+            confirmLabel = text(language, "Sil", "Delete"),
+            dismissLabel = text(language, "İptal", "Cancel"),
+            destructive = true,
+            onDismiss = { deleteTarget = null },
+            onConfirm = {
+                onDeleteApp(target.packageName)
+                deleteTarget = null
+                screen = AppScreen.HOME
+                selectedPackageName = null
             }
         )
     }
@@ -1347,7 +1654,7 @@ private fun DashboardHeader(
                 SummaryStatChip(text(language, "Tamam", "Done"), completedCount.toString(), Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SummaryStatChip(text(language, "Bugün", "Today"), "$todayMinutes dk", Modifier.weight(1f))
+                SummaryStatChip(text(language, "Bugün", "Today"), "$todayMinutes ${minuteLabel(language)}", Modifier.weight(1f))
                 SummaryStatChip(text(language, "Seri", "Streak"), "14+", Modifier.weight(1f))
             }
         }
@@ -1360,6 +1667,7 @@ private fun HomeFilterBar(
     selected: HomeFilter,
     activeCount: Int,
     completedCount: Int,
+    archivedCount: Int,
     allCount: Int,
     onSelect: (HomeFilter) -> Unit
 ) {
@@ -1369,6 +1677,9 @@ private fun HomeFilterBar(
         }
         SortChip("${text(language, "Tamamlandı", "Done")} $completedCount", selected == HomeFilter.COMPLETED) {
             onSelect(HomeFilter.COMPLETED)
+        }
+        SortChip("${text(language, "Arşiv", "Archive")} $archivedCount", selected == HomeFilter.ARCHIVED) {
+            onSelect(HomeFilter.ARCHIVED)
         }
         SortChip("${text(language, "Tümü", "All")} $allCount", selected == HomeFilter.ALL) {
             onSelect(HomeFilter.ALL)
@@ -1587,7 +1898,11 @@ private fun AppUsageCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text(language, "Bugün $today dk | Toplam $total dk", "Today $today min | Total $total min"),
+                    text(
+                        language,
+                        "Bugün $today ${minuteLabel(language)} | Toplam $total ${minuteLabel(language)}",
+                        "Today $today ${minuteLabel(language)} | Total $total ${minuteLabel(language)}"
+                    ),
                     color = secondaryTextColor(),
                     fontSize = 14.sp,
                     maxLines = 1,
@@ -1604,13 +1919,7 @@ private fun AppUsageCard(
                 }
             }
             Surface(
-                color = if (item.isArchived) {
-                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
-                } else if (isDarkScheme()) {
-                    Color.White.copy(alpha = 0.07f)
-                } else {
-                    Color.Black.copy(alpha = 0.045f)
-                },
+                color = rowSurfaceColor(),
                 contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = RoundedCornerShape(18.dp),
                 border = BorderStroke(1.dp, separatorColor())
@@ -1618,6 +1927,7 @@ private fun AppUsageCard(
                 Text(
                     when {
                         item.isArchived -> text(language, "Arşiv", "Archive")
+                        item.completedAtMillis != null -> text(language, "Tamam", "Done")
                         else -> "$day/14"
                     },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -1651,6 +1961,7 @@ private fun DetailPage(
     onOpenPlayStore: () -> Unit,
     onEditDay: () -> Unit,
     onMarkCompleted: () -> Unit,
+    onReactivate: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1659,12 +1970,8 @@ private fun DetailPage(
     val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
     val max = usageDays.maxOfOrNull { it.minutes } ?: 0L
     val hasUsageData = usageDays.any { !it.isFuture && it.minutes > 0L }
-    var viewMode by remember(item.packageName) { mutableStateOf(DetailViewMode.GRAPH) }
-    val detailListState = remember(item.packageName) { LazyListState() }
-
-    LaunchedEffect(item.packageName) {
-        detailListState.scrollToItem(0)
-    }
+    var viewMode by rememberSaveable(item.packageName) { mutableStateOf(DetailViewMode.GRAPH) }
+    val detailListState = rememberSaveable(item.packageName, saver = LazyListState.Saver) { LazyListState() }
 
     LazyColumn(
         state = detailListState,
@@ -1707,8 +2014,8 @@ private fun DetailPage(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatTile(text(language, "Gün", "Day"), "$day/14", Modifier.weight(1f))
-                        StatTile(text(language, "Bugün", "Today"), "$today dk", Modifier.weight(1f))
-                        StatTile(text(language, "Toplam", "Total"), "$total dk", Modifier.weight(1f))
+                        StatTile(text(language, "Bugün", "Today"), "$today ${minuteLabel(language)}", Modifier.weight(1f))
+                        StatTile(text(language, "Toplam", "Total"), "$total ${minuteLabel(language)}", Modifier.weight(1f))
                     }
 
                     UsageBars(usageDays, max)
@@ -1737,7 +2044,11 @@ private fun DetailPage(
                     ) {
                         Text(text(language, "Yönetim", "Manage"), fontWeight = FontWeight.Bold, fontSize = 17.sp)
                         Text(
-                            text(language, if (item.completedAtMillis == null) "Canlı" else "Tamamlandı", if (item.completedAtMillis == null) "Live" else "Done"),
+                            when {
+                                item.isArchived -> text(language, "Arşivde", "Archived")
+                                item.completedAtMillis == null -> text(language, "Canlı", "Live")
+                                else -> text(language, "Tamamlandı", "Done")
+                            },
                             color = secondaryTextColor(),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
@@ -1767,23 +2078,16 @@ private fun DetailPage(
                                 compact = true
                             )
                         } else {
-                            Surface(
+                            DetailActionButton(
+                                text(language, "Tekrar aktif", "Reactivate"),
+                                Icons.Rounded.Refresh,
+                                onReactivate,
                                 modifier = Modifier.weight(1f),
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                                contentColor = MaterialTheme.colorScheme.onSurface,
-                                shape = RoundedCornerShape(18.dp),
-                                border = BorderStroke(1.dp, separatorColor())
-                            ) {
-                                Text(
-                                    text(language, "Tamamlandı", "Done"),
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 13.sp
-                                )
-                            }
+                                compact = true
+                            )
                         }
                         DetailActionButton(
-                            if (item.isArchived) text(language, "Çıkar", "Restore") else text(language, "Arşiv", "Archive"),
+                            if (item.isArchived) text(language, "Arşivden çıkar", "Restore") else text(language, "Arşiv", "Archive"),
                             Icons.Rounded.Archive,
                             onArchive,
                             modifier = Modifier.weight(1f),
@@ -1815,10 +2119,23 @@ private fun DetailPage(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(text(language, "14 günlük özet", "14-day summary"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        val firstVisibleDay = usageDays.firstOrNull()?.index ?: 1
+                        val lastVisibleDay = usageDays.lastOrNull()?.index ?: 14
+                        val summaryTitle = if (lastVisibleDay > 14) {
+                            text(language, "$firstVisibleDay-$lastVisibleDay. gün özeti", "Day $firstVisibleDay-$lastVisibleDay summary")
+                        } else {
+                            text(language, "14 günlük özet", "14-day summary")
+                        }
+                        Text(summaryTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ThemeChip("Grafik", viewMode == DetailViewMode.GRAPH) { viewMode = DetailViewMode.GRAPH }
-                            ThemeChip("Yazılı", viewMode == DetailViewMode.TEXT) { viewMode = DetailViewMode.TEXT }
+                            ThemeChip(
+                                text(language, "Grafik", "Graph", "Graphique", "Gráfico", "图表", "ग्राफ", "График"),
+                                viewMode == DetailViewMode.GRAPH
+                            ) { viewMode = DetailViewMode.GRAPH }
+                            ThemeChip(
+                                text(language, "Yazılı", "Text", "Texte", "Texto", "文字", "टेक्स्ट", "Текст"),
+                                viewMode == DetailViewMode.TEXT
+                            ) { viewMode = DetailViewMode.TEXT }
                         }
                     }
                     Text(
@@ -1836,9 +2153,9 @@ private fun DetailPage(
                             )
                         )
                     } else if (viewMode == DetailViewMode.GRAPH) {
-                        UsageTimelineGrid(days = usageDays)
+                        UsageTimelineGrid(language = language, days = usageDays)
                     } else {
-                        UsageTextSummary(days = usageDays)
+                        UsageTextSummary(language = language, days = usageDays)
                     }
                 }
             }
@@ -1874,6 +2191,95 @@ private fun DetailActionButton(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConfirmationSheet(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    dismissLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    destructive: Boolean = false
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+        containerColor = canvasColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        scrimColor = Color.Black.copy(alpha = 0.48f),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .size(width = 42.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(separatorColor())
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(rowSurfaceColor())
+                    .border(panelBorder(), RoundedCornerShape(26.dp))
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text(message, color = secondaryTextColor(), lineHeight = 20.sp)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = rowSurfaceColor(),
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    border = panelBorder()
+                ) {
+                    Text(dismissLabel, fontWeight = FontWeight.SemiBold)
+                }
+                Button(
+                    onClick = onConfirm,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (destructive) {
+                            MaterialTheme.colorScheme.error.copy(alpha = if (isDarkScheme()) 0.28f else 0.14f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.18f else 0.10f)
+                        },
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (destructive) MaterialTheme.colorScheme.error.copy(alpha = 0.36f) else separatorColor()
+                    )
+                ) {
+                    Text(confirmLabel, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
@@ -1925,7 +2331,10 @@ private fun DaySetupDialog(
     val dayRange = 1..20
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { it != SheetValue.Hidden }
+    )
     val initialDay = target.initialDay.coerceIn(dayRange.first, dayRange.last)
     val selectedDay by remember {
         derivedStateOf {
@@ -2203,12 +2612,18 @@ private fun SettingsPage(
     themeMode: AppThemeMode,
     darkTheme: Boolean,
     reminderHour: Int,
-    onLanguageChange: (AppLanguage) -> Unit,
+    dateFormat: DateDisplayFormat,
+    notificationAllowed: Boolean,
+    languageMode: LanguageMode,
+    onLanguageChange: (LanguageMode) -> Unit,
     onThemeChange: (AppTheme) -> Unit,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onReminderHourChange: (Int) -> Unit,
+    onDateFormatChange: (DateDisplayFormat) -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onSendMail: () -> Unit,
-    onDonate: () -> Unit
+    onDonate: () -> Unit,
+    onOpenPolicyPage: () -> Unit
 ) {
     LazyColumn(
         modifier = modifier
@@ -2222,9 +2637,45 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
-                    title = text(language, "Dil", "Language", "Langue", "Idioma", "??", "????", "????")
+                    title = text(language, "Dil", "Language", "Langue", "Idioma", "语言", "भाषा", "Язык")
                 ) {
-                    LanguageDropdown(language = language, onLanguageChange = onLanguageChange)
+                    LanguageDropdown(
+                        language = language,
+                        languageMode = languageMode,
+                        onLanguageChange = onLanguageChange
+                    )
+                }
+            }
+        }
+        item {
+            SettingsCard {
+                SettingsSection(
+                    icon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+                    title = text(language, "Tarih biçimi", "Date format")
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text(
+                                language,
+                                "Grafikte ve liste özetlerinde tarih gösterimi buradan değişir.",
+                                "Change the date display used in charts and lists.",
+                                "Modifier l'affichage des dates dans les graphiques et les listes.",
+                                "Cambiar el formato de fecha usado en gráficos y listas.",
+                                "在图表和列表中更改日期显示方式。",
+                                "चार्ट और सूचियों में तारीख़ दिखाने का तरीका बदलें।",
+                                "Измените формат отображения дат в графиках и списках."
+                            ),
+                            color = secondaryTextColor()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ThemeChip(dateFormatChipLabel(language, DateDisplayFormat.MONTH_DAY), dateFormat == DateDisplayFormat.MONTH_DAY) {
+                                onDateFormatChange(DateDisplayFormat.MONTH_DAY)
+                            }
+                            ThemeChip(dateFormatChipLabel(language, DateDisplayFormat.DAY_MONTH), dateFormat == DateDisplayFormat.DAY_MONTH) {
+                                onDateFormatChange(DateDisplayFormat.DAY_MONTH)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2232,16 +2683,16 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Palette, contentDescription = null) },
-                    title = text(language, "Görünüm", "Appearance", "Apparence", "Apariencia", "??", "??????", "??????? ???")
+                    title = text(language, "Görünüm", "Appearance", "Apparence", "Apariencia", "外观", "रूप", "Оформление")
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ThemeChip(text(language, "Sistem", "System", "Système", "Sistema", "??", "??????", "???????"), themeMode == AppThemeMode.SYSTEM) {
+                        ThemeChip(text(language, "Sistem", "System", "Système", "Sistema", "系统", "सिस्टम", "Система"), themeMode == AppThemeMode.SYSTEM) {
                             onThemeModeChange(AppThemeMode.SYSTEM)
                         }
-                        ThemeChip(text(language, "Açık", "Light", "Clair", "Claro", "??", "????", "???????"), themeMode == AppThemeMode.LIGHT) {
+                        ThemeChip(text(language, "Açık", "Light", "Clair", "Claro", "浅色", "हल्का", "Светлая"), themeMode == AppThemeMode.LIGHT) {
                             onThemeModeChange(AppThemeMode.LIGHT)
                         }
-                        ThemeChip(text(language, "Koyu", "Dark", "Sombre", "Oscuro", "??", "?????", "??????"), themeMode == AppThemeMode.DARK) {
+                        ThemeChip(text(language, "Koyu", "Dark", "Sombre", "Oscuro", "深色", "गहरा", "Тёмная"), themeMode == AppThemeMode.DARK) {
                             onThemeModeChange(AppThemeMode.DARK)
                         }
                     }
@@ -2249,7 +2700,12 @@ private fun SettingsPage(
                         text(
                             language,
                             if (themeMode == AppThemeMode.SYSTEM) "Cihaz temasını takip ediyor." else if (darkTheme) "Koyu tema aktif." else "Açık tema aktif.",
-                            if (themeMode == AppThemeMode.SYSTEM) "Following device theme." else if (darkTheme) "Dark theme is active." else "Light theme is active."
+                            if (themeMode == AppThemeMode.SYSTEM) "Following device theme." else if (darkTheme) "Dark theme is active." else "Light theme is active.",
+                            if (themeMode == AppThemeMode.SYSTEM) "Suit le thème de l'appareil." else if (darkTheme) "Le thème sombre est actif." else "Le thème clair est actif.",
+                            if (themeMode == AppThemeMode.SYSTEM) "Sigue el tema del dispositivo." else if (darkTheme) "El tema oscuro está activo." else "El tema claro está activo.",
+                            if (themeMode == AppThemeMode.SYSTEM) "跟随设备主题。" else if (darkTheme) "深色主题已启用。" else "浅色主题已启用。",
+                            if (themeMode == AppThemeMode.SYSTEM) "डिवाइस थीम का पालन कर रहा है।" else if (darkTheme) "डार्क थीम सक्रिय है।" else "लाइट थीम सक्रिय है।",
+                            if (themeMode == AppThemeMode.SYSTEM) "Использует тему устройства." else if (darkTheme) "Тёмная тема активна." else "Светлая тема активна."
                         )
                     )
                 }
@@ -2265,7 +2721,12 @@ private fun SettingsPage(
                         text(
                             language,
                             "Günlük seri kontrolü her gün yaklaşık ${reminderHour.toString().padStart(2, '0')}:00 için planlanır.",
-                            "Daily series check is scheduled around ${reminderHour.toString().padStart(2, '0')}:00."
+                            "Daily series check is scheduled around ${reminderHour.toString().padStart(2, '0')}:00.",
+                            "La vérification quotidienne de la série est planifiée vers ${reminderHour.toString().padStart(2, '0')}:00.",
+                            "La comprobación diaria de la serie se programa alrededor de las ${reminderHour.toString().padStart(2, '0')}:00.",
+                            "每日系列检查计划在约 ${reminderHour.toString().padStart(2, '0')}:00 运行。",
+                            "दैनिक सीरीज़ जाँच लगभग ${reminderHour.toString().padStart(2, '0')}:00 पर नियोजित है।",
+                            "Ежедневная проверка серии запланирована примерно на ${reminderHour.toString().padStart(2, '0')}:00."
                         ),
                         color = secondaryTextColor()
                     )
@@ -2290,15 +2751,34 @@ private fun SettingsPage(
         }
         item {
             SettingsCard {
+                SettingsAction(
+                    icon = { Icon(Icons.Rounded.Notifications, contentDescription = null) },
+                    title = text(language, "Bildirim izni", "Notification permission", "Autorisation de notification", "Permiso de notificaciones", "通知权限", "नोटिफिकेशन अनुमति", "Разрешение уведомлений"),
+                    subtitle = if (notificationAllowed) {
+                        text(language, "Açık. Hatırlatma ayarlarını görmek için dokun.", "On. Tap to review reminder settings.", "Activée. Appuyez pour vérifier les réglages.", "Activado. Toca para revisar los ajustes.", "已开启。点按查看提醒设置。", "चालू। रिमाइंडर सेटिंग देखने के लिए टैप करें।", "Включено. Нажмите, чтобы проверить настройки.")
+                    } else {
+                        text(language, "Kapalı. Hatırlatmalar için izni aç.", "Off. Enable it for reminders.", "Désactivée. Activez-la pour les rappels.", "Desactivado. Actívalo para recordatorios.", "已关闭。开启后才能提醒。", "बंद। रिमाइंडर के लिए अनुमति दें।", "Выключено. Включите для напоминаний.")
+                    },
+                    onClick = onRequestNotificationPermission
+                )
+            }
+        }
+        item {
+            SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null) },
-                    title = text(language, "Yardım", "Help", "Aide", "Ayuda", "??", "???", "??????")
+                    title = text(language, "Yardım", "Help", "Aide", "Ayuda", "帮助", "मदद", "Помощь")
                 ) {
                     Text(
                         text(
                             language,
                             "Uygulama seç, test gününü gir ve kullanım erişimi izniyle günlük süreleri takip et. Kart ikonuna dokunarak ilgili uygulamayı açabilirsin.",
-                            "Pick apps, enter the current test day, and track daily minutes with Usage Access. Tap an app icon to open that app."
+                            "Pick apps, enter the current test day, and track daily minutes with Usage Access. Tap an app icon to open that app.",
+                            "Choisis des applications, saisis le jour de test actuel et suis les minutes quotidiennes avec l'accès à l'utilisation. Appuie sur l'icône d'une application pour l'ouvrir.",
+                            "Elige aplicaciones, introduce el día actual de prueba y sigue los minutos diarios con Acceso de uso. Toca el icono de una app para abrirla.",
+                            "选择应用，输入当前测试日，并通过使用情况访问跟踪每日分钟数。点按应用图标即可打开应用。",
+                            "ऐप चुनें, वर्तमान टेस्ट दिन दर्ज करें, और Usage Access से रोज़ाना मिनट ट्रैक करें। ऐप खोलने के लिए उसके आइकन पर टैप करें।",
+                            "Выберите приложения, укажите текущий день теста и отслеживайте ежедневные минуты через доступ к статистике использования. Коснитесь значка приложения, чтобы открыть его."
                         )
                     )
                 }
@@ -2308,33 +2788,22 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-                    title = text(language, "Kullanım şartları", "Terms of use")
+                    title = text(language, "Yasal bilgiler", "Legal information", "Informations légales", "Información legal", "法律信息", "कानूनी जानकारी", "Правовая информация")
                 ) {
-                    Text(
-                        text(
-                            language,
-                            "Bu uygulama kapalı test takibi için hazırlanmıştır. Veriler cihazda yerel olarak saklanır; otomatik üçüncü taraf aktarımı yoktur. Play Store sayfası ve sistem kullanım izni dışında veri okunmaz.",
-                            "This app is made for closed-test tracking. Data is stored locally on the device; there is no automatic third-party upload. Nothing outside the Play Store page and system usage access is read."
+                    Button(
+                        onClick = onOpenPolicyPage,
+                        shape = RoundedCornerShape(18.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = rowSurfaceColor(),
+                            contentColor = MaterialTheme.colorScheme.onSurface
                         ),
-                        color = secondaryTextColor()
-                    )
-                }
-            }
-        }
-        item {
-            SettingsCard {
-                SettingsSection(
-                    icon = { Icon(Icons.Rounded.ShoppingBag, contentDescription = null) },
-                    title = text(language, "Gizlilik politikası", "Privacy policy")
-                ) {
-                    Text(
-                        text(
-                            language,
-                            "Toplanan bilgiler seçilen uygulama listesi, test günü, arşiv durumu ve cihaz kullanım istatistikleridir. Bunlar yalnızca yerel veritabanında tutulur. Destek e-postası ve bağış bağlantısı uygulama dışındaki servislere yönlendirir.",
-                            "Collected data is limited to the selected app list, test day, archive state, and device usage statistics. Everything stays in the local database. Support mail and donation links redirect to external services."
-                        ),
-                        color = secondaryTextColor()
-                    )
+                        border = panelBorder(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(text(language, "Sayfayı aç", "Open page", "Ouvrir la page", "Abrir página", "打开页面", "पेज खोलें", "Открыть страницу"))
+                    }
                 }
             }
         }
@@ -2342,7 +2811,7 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsAction(
                     icon = { Icon(Icons.Rounded.Email, contentDescription = null) },
-                    title = text(language, "Destek e-postası", "Support email", "E-mail support", "Correo soporte", "????", "?????? ????", "????? ?????????"),
+                    title = text(language, "Destek e-postası", "Support email", "E-mail de support", "Correo de soporte", "支持邮箱", "सहायता ईमेल", "Почта поддержки"),
                     subtitle = SUPPORT_MAIL,
                     onClick = onSendMail
                 )
@@ -2352,7 +2821,7 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsAction(
                     icon = { Icon(Icons.Rounded.Favorite, contentDescription = null) },
-                    title = text(language, "Bağış / Kahve ısmarla", "Donate / Buy me a coffee", "Don / Offrir un café", "Donar / Invitar un café", "?? / ?????", "??? / ????", "????? / ????"),
+                    title = text(language, "Bağış / Kahve ısmarla", "Donate / Buy me a coffee", "Don / Offrir un café", "Donar / Invitar un café", "捐赠 / 请我喝咖啡", "दान / कॉफी", "Пожертвовать / кофе"),
                     subtitle = DONATION_URL,
                     onClick = onDonate
                 )
@@ -2362,13 +2831,18 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-                    title = text(language, "Hakkında", "About", "À propos", "Acerca de", "??", "?? ???? ???", "? ??????????")
+                    title = text(language, "Hakkında", "About", "À propos", "Acerca de", "关于", "के बारे में", "О приложении")
                 ) {
                     Text(
                         text(
                             language,
-                            "Closed Test Tracker v1.0\nMD Studio tarafından Google Play kapalı testlerini daha düzenli sürdürmek, test serilerini ve uygulama kullanım sürelerini gün gün takip etmek için geliştirildi.\n\nWeb/PWA kısayollarında süre tarayıcı paketine (Chrome, Samsung Internet vb.) yazılabilir; Android site bazlı süreyi uygulamalara vermez. Bu yüzden bazı web tarzı uygulamalar 0 dk görünebilir.\n\nPlay Store yayıncı adı Android tarafından cihaz içinden verilmez. Uygulama internet varsa Play Store sayfasından yayıncı adını okumayı dener; sayfa erişilemiyorsa yayıncı boş kalabilir.",
-                            "Closed Test Tracker v1.0\nDeveloped by MD Studio to keep Google Play closed tests more organized and track test streaks with daily app usage minutes.\n\nFor web/PWA shortcuts, time can be attributed to the browser package (Chrome, Samsung Internet, etc.). Android does not expose per-site usage time to apps, so some web-style apps may show 0 min.\n\nAndroid does not expose the Play Store publisher name locally. When internet is available, the app tries to read it from the Play Store page; if the page is unavailable, publisher may stay empty."
+                            "Closed Test Tracker v1.0\nMD Studio tarafından Google Play kapalı testlerini daha düzenli sürdürmek, test serilerini ve uygulama kullanım sürelerini gün gün takip etmek için geliştirildi.\n\nWeb/PWA kısayollarında süre tarayıcı paketine (Chrome, Samsung Internet vb.) yazılabilir; Android site bazlı süreyi uygulamalara vermez. Bu yüzden bazı web tarzı uygulamalar 0 dk görünebilir.\n\nPlay Store yayıncı adı Android tarafından cihaz içinden verilmez. Uygulama internet varsa Play Store sayfasından yayıncı adını okumayı dener; sayfa erişilemiyorsa yayıncı boş kalabilir.\n\nBir uygulama beta veya üretim kanalında Google Play'de yayınlanana kadar yayıncı bilgisi görünmeyebilir. Yayıncı adının görünmesi, uygulamanın Play Store'da başarıyla yayınlandığını gösteren işaretlerden biridir.",
+                            "Closed Test Tracker v1.0\nDeveloped by MD Studio to keep Google Play closed tests more organized and track test streaks with daily app usage minutes.\n\nFor web/PWA shortcuts, time can be attributed to the browser package (Chrome, Samsung Internet, etc.). Android does not expose per-site usage time to apps, so some web-style apps may show 0 min.\n\nAndroid does not expose the Play Store publisher name locally. When internet is available, the app tries to read it from the Play Store page; if the page is unavailable, publisher may stay empty.\n\nPublisher information may not appear until an app is published on Google Play through a beta or production track. Seeing the publisher name is one sign that the app has been published successfully on the Play Store.",
+                            "Closed Test Tracker v1.0\nDéveloppée par MD Studio pour mieux organiser les tests fermés Google Play et suivre les séries de test avec les minutes d'utilisation quotidiennes.\n\nPour les raccourcis web/PWA, le temps peut être attribué au navigateur (Chrome, Samsung Internet, etc.). Android n'expose pas le temps d'utilisation par site aux applications, donc certaines apps web peuvent afficher 0 min.\n\nAndroid n'expose pas localement le nom de l'éditeur du Play Store. Quand Internet est disponible, l'application essaie de le lire depuis la page Play Store ; si la page est inaccessible, l'éditeur peut rester vide.\n\nLes informations sur l'éditeur peuvent ne pas apparaître tant qu'une application n'est pas publiée sur Google Play via une piste bêta ou production. Voir le nom de l'éditeur est l'un des signes indiquant que l'application a bien été publiée sur le Play Store.",
+                            "Closed Test Tracker v1.0\nDesarrollada por MD Studio para mantener las pruebas cerradas de Google Play más organizadas y seguir las rachas de prueba con los minutos de uso diarios.\n\nEn accesos directos web/PWA, el tiempo puede atribuirse al paquete del navegador (Chrome, Samsung Internet, etc.). Android no expone el tiempo de uso por sitio a las apps, así que algunas apps web pueden mostrar 0 min.\n\nAndroid no expone localmente el nombre del distribuidor de Play Store. Cuando hay Internet, la app intenta leerlo desde la página de Play Store; si la página no está disponible, el distribuidor puede quedar vacío.\n\nLa información del distribuidor puede no aparecer hasta que una app se publique en Google Play mediante un canal beta o de producción. Ver el nombre del distribuidor es una señal de que la app se publicó correctamente en Play Store.",
+                            "Closed Test Tracker v1.0\n由 MD Studio 开发，用于更有条理地管理 Google Play 封闭测试，并按天跟踪应用使用时长和测试连续天数。\n\n对于网页/PWA 快捷方式，时间可能会记到浏览器包（Chrome、Samsung Internet 等）上。Android 不会把按网站划分的使用时间提供给应用，因此某些网页类应用可能显示 0 分钟。\n\nAndroid 无法在本地直接提供 Play Store 发布者名称。联网时，应用会尝试从 Play Store 页面读取；如果页面无法访问，发布者可能为空。\n\n在应用通过 beta 或正式渠道发布到 Google Play 之前，发布者信息可能不会显示。能够看到发布者名称，也是应用已成功发布到 Play Store 的标志之一。",
+                            "Closed Test Tracker v1.0\nMD Studio द्वारा बनाया गया, ताकि Google Play बंद परीक्षणों को अधिक व्यवस्थित रखा जा सके और दैनिक ऐप उपयोग मिनटों के साथ टेस्ट सीरीज़ को ट्रैक किया जा सके।\n\nवेब/PWA शॉर्टकट्स के लिए समय ब्राउज़र पैकेज (Chrome, Samsung Internet, आदि) पर जोड़ा जा सकता है। Android साइट-स्तर का उपयोग समय ऐप्स को नहीं देता, इसलिए कुछ वेब-स्टाइल ऐप 0 मिनट दिखा सकते हैं।\n\nAndroid Play Store के प्रकाशक नाम को स्थानीय रूप से नहीं देता। इंटरनेट उपलब्ध होने पर ऐप इसे Play Store पेज से पढ़ने की कोशिश करता है; पेज उपलब्ध नहीं होने पर प्रकाशक खाली रह सकता है।\n\nजब तक कोई ऐप beta या production track के ज़रिए Google Play पर प्रकाशित नहीं होता, प्रकाशक की जानकारी नहीं दिख सकती। प्रकाशक नाम दिखना इस बात का एक संकेत है कि ऐप Play Store पर सफलतापूर्वक प्रकाशित हो चुका है।",
+                            "Closed Test Tracker v1.0\nСоздано MD Studio, чтобы упорядочить закрытые тесты Google Play и отслеживать серии тестирования по ежедневным минутам использования приложений.\n\nДля веб/PWA-ярлыков время может засчитываться в пакет браузера (Chrome, Samsung Internet и т. д.). Android не предоставляет приложениям время использования по сайтам, поэтому некоторые веб-приложения могут показывать 0 мин.\n\nAndroid локально не предоставляет имя издателя Play Store. При наличии интернета приложение пытается прочитать его со страницы Play Store; если страница недоступна, издатель может остаться пустым.\n\nИнформация об издателе может не отображаться, пока приложение не опубликовано в Google Play через beta- или production-канал. Появление имени издателя является одним из признаков успешной публикации приложения в Play Store."
                         )
                     )
                 }
@@ -2378,13 +2852,21 @@ private fun SettingsPage(
 }
 
 @Composable
-private fun UsageTimelineGrid(days: List<UsageDay>) {
+private fun UsageTimelineGrid(language: AppLanguage, days: List<UsageDay>) {
     val visibleDays = days.filterNot { it.isFuture }
     val maxMinutes = maxOf(1L, visibleDays.maxOfOrNull { it.minutes } ?: 0L)
     val dark = isDarkScheme()
     val gridColor = if (dark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f)
     val lineColor = MaterialTheme.colorScheme.primary.copy(alpha = if (dark) 0.82f else 0.72f)
     val pointColor = MaterialTheme.colorScheme.tertiary
+    val minLabel = minuteLabel(language)
+    val firstVisibleDay = days.firstOrNull()?.index ?: 1
+    val lastVisibleDay = days.lastOrNull()?.index ?: 14
+    val rangeLabel = if (lastVisibleDay > 14) {
+        text(language, "Son 14 gün", "Last 14 days", "14 derniers jours", "Últimos 14 días", "最近 14 天", "पिछले 14 दिन", "Последние 14 дней")
+    } else {
+        text(language, "14 gün", "14 days", "14 jours", "14 días", "14 天", "14 दिन", "14 дней")
+    }
     val xLabels = visibleDays.mapIndexedNotNull { index, day ->
         val step = maxOf(1, visibleDays.size / 4)
         if (index % step == 0 || index == visibleDays.lastIndex) day.label else null
@@ -2392,6 +2874,34 @@ private fun UsageTimelineGrid(days: List<UsageDay>) {
     val yMarks = listOf(maxMinutes, maxMinutes / 2, 0L).distinct().sortedDescending()
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(
+                color = rowSurfaceColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(1.dp, separatorColor())
+            ) {
+                Text(
+                    text = text(language, "Dakika", "Minutes", "Minutes", "Minutos", "分钟", "मिनट", "Минуты"),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp
+                )
+            }
+            Surface(
+                color = rowSurfaceColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(1.dp, separatorColor())
+            ) {
+                Text(
+                    text = rangeLabel,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp
+                )
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -2402,7 +2912,7 @@ private fun UsageTimelineGrid(days: List<UsageDay>) {
             ) {
                 yMarks.forEach { mark ->
                     Text(
-                        text = if (mark == 0L) "0" else mark.toString(),
+                        text = if (mark == 0L) "0 $minLabel" else "$mark $minLabel",
                         color = secondaryTextColor(),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
@@ -2436,10 +2946,10 @@ private fun UsageTimelineGrid(days: List<UsageDay>) {
                     val stepX = if (visibleDays.size <= 1) 0f else chartWidth / (visibleDays.size - 1)
 
                     yMarks.forEach { mark ->
-                        val ratio = mark.toFloat() / maxMinutes.toFloat()
-                        val y = topPad + (chartHeight * (1f - ratio))
-                        drawLine(
-                            color = gridColor,
+                            val ratio = mark.toFloat() / maxMinutes.toFloat()
+                            val y = topPad + (chartHeight * (1f - ratio))
+                            drawLine(
+                                color = gridColor,
                             start = Offset(leftPad, y),
                             end = Offset(size.width - rightPad, y),
                             strokeWidth = 1.2f
@@ -2484,10 +2994,10 @@ private fun UsageTimelineGrid(days: List<UsageDay>) {
         ) {
             xLabels.forEach { label ->
                 Text(
-                    text = label,
-                    color = secondaryTextColor(),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium
+                                text = label,
+                                color = secondaryTextColor(),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
                 )
             }
         }
@@ -2495,7 +3005,7 @@ private fun UsageTimelineGrid(days: List<UsageDay>) {
 }
 
 @Composable
-private fun UsageTextSummary(days: List<UsageDay>) {
+private fun UsageTextSummary(language: AppLanguage, days: List<UsageDay>) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         days.forEach { day ->
             Surface(
@@ -2519,13 +3029,17 @@ private fun UsageTextSummary(days: List<UsageDay>) {
                             fontSize = 14.sp
                         )
                         Text(
-                            text = if (day.isFuture) "-" else "Gün ${day.index}",
+                            text = if (day.isFuture) "-" else text(language, "Gün ${day.index}", "Day ${day.index}", "Jour ${day.index}", "Día ${day.index}", "第 ${day.index} 天", "दिन ${day.index}", "День ${day.index}"),
                             color = secondaryTextColor(),
                             fontSize = 12.sp
                         )
                     }
                     Text(
-                        text = if (day.isFuture) "Bekleniyor" else "${day.minutes} dk",
+                        text = if (day.isFuture) {
+                            text(language, "Bekleniyor", "Pending", "En attente", "Pendiente", "等待中", "बाकी", "Ожидается")
+                        } else {
+                            "${day.minutes} ${minuteLabel(language)}"
+                        },
                         fontWeight = FontWeight.SemiBold,
                         color = secondaryTextColor(),
                         fontSize = 13.sp
@@ -2610,6 +3124,8 @@ private fun AppOverviewSheet(
     language: AppLanguage,
     tracked: List<TrackedApp>,
     usageAccess: Boolean,
+    todayUsageMap: Map<String, Long>,
+    installedAppsByPackage: Map<String, InstalledApp>,
     playPublishers: Map<String, String>,
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
@@ -2682,7 +3198,11 @@ private fun AppOverviewSheet(
                     border = BorderStroke(1.dp, separatorColor()),
                     modifier = Modifier.clickable(onClick = onDismiss)
                 ) {
-                    Text("x", modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp), fontWeight = FontWeight.SemiBold)
+                    Icon(
+                        Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = text(language, "Kapat", "Close"),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp).size(18.dp)
+                    )
                 }
             }
 
@@ -2759,8 +3279,9 @@ private fun AppOverviewSheet(
                             key = { it.packageName }
                         ) { item ->
                             val day = SeriesCalculator.currentDay(item)
-                            val today = if (usageAccess) UsageReader.todayUsageMinutes(LocalContext.current, item.packageName) else 0L
+                            val today = if (usageAccess) todayUsageMap[item.packageName] ?: 0L else 0L
                             val publisher = playPublishers[item.packageName]
+                            val installedApp = installedAppsByPackage[item.packageName]
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -2768,12 +3289,22 @@ private fun AppOverviewSheet(
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(42.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(if (item.isArchived) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.08f else 0.045f))
-                                )
+                                if (installedApp != null) {
+                                    Image(
+                                        bitmap = installedApp.icon.asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(if (item.isArchived) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.08f else 0.045f))
+                                    )
+                                }
                                 Spacer(Modifier.size(12.dp))
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text(
@@ -2784,23 +3315,29 @@ private fun AppOverviewSheet(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = buildString {
-                                            append(if (item.isArchived) text(language, "Arşiv", "Archive") else "$day/14")
-                                            if (usageAccess) append("  •  ").append(today).append(" dk")
-                                            if (!publisher.isNullOrBlank()) append("  •  ").append(publisher)
-                                        },
+                    text = buildString {
+                        append(
+                            when {
+                                item.isArchived -> text(language, "Arşiv", "Archive")
+                                item.completedAtMillis != null -> text(language, "Tamam", "Done")
+                                else -> "$day/14"
+                            }
+                        )
+                        if (usageAccess) append("  •  ").append(today).append(" ").append(minuteLabel(language))
+                        if (!publisher.isNullOrBlank()) append("  •  ").append(publisher)
+                    },
                                         color = secondaryTextColor(),
                                         fontSize = 12.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                Surface(
-                                    color = when {
-                                        item.isArchived -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f)
-                                        item.completedAtMillis != null -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                        else -> rowSurfaceColor()
-                                    },
+            Surface(
+                color = when {
+                    item.isArchived -> rowSurfaceColor()
+                    item.completedAtMillis != null -> rowSurfaceColor()
+                    else -> rowSurfaceColor()
+                },
                                     contentColor = MaterialTheme.colorScheme.onSurface,
                                     shape = RoundedCornerShape(16.dp),
                                     border = BorderStroke(1.dp, separatorColor())
@@ -2846,42 +3383,216 @@ private fun SettingsCard(content: @Composable () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LanguageDropdown(language: AppLanguage, onLanguageChange: (AppLanguage) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = !expanded }
+private fun LanguageDropdown(
+    language: AppLanguage,
+    languageMode: LanguageMode,
+    onLanguageChange: (LanguageMode) -> Unit
+) {
+    var showSheet by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showSheet = true },
+        color = rowSurfaceColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(22.dp),
+        border = panelBorder()
     ) {
-        OutlinedTextField(
-            value = languageDisplay(language),
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Language") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier
-                .menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled = true)
-                .fillMaxWidth(),
-            singleLine = true,
-            colors = glassTextFieldColors()
-        )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.background(canvasColor()),
-            containerColor = canvasColor(),
-            tonalElevation = 0.dp,
-            shadowElevation = 0.dp
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            AppLanguage.entries.forEach { item ->
-                DropdownMenuItem(
-                    text = { Text(languageDisplay(item), color = MaterialTheme.colorScheme.onSurface) },
-                    onClick = {
-                        onLanguageChange(item)
-                        expanded = false
-                    }
+            LanguageCodePill(languageModeCode(languageMode), selected = true)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text(language, "Dil", "Language", "Langue", "Idioma", "语言", "भाषा", "Язык"),
+                    color = secondaryTextColor(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    languageModeFieldLabel(languageMode, language),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                text(language, "Seç", "Choose", "Choisir", "Elegir", "选择", "चुनें", "Выбрать"),
+                color = secondaryTextColor(),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp
+            )
+        }
+    }
+
+    if (showSheet) {
+        LanguagePickerSheet(
+            language = language,
+            languageMode = languageMode,
+            onDismiss = { showSheet = false },
+            onLanguageChange = {
+                onLanguageChange(it)
+                showSheet = false
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LanguagePickerSheet(
+    language: AppLanguage,
+    languageMode: LanguageMode,
+    onDismiss: () -> Unit,
+    onLanguageChange: (LanguageMode) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+        containerColor = canvasColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        scrimColor = Color.Black.copy(alpha = 0.48f),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .size(width = 48.dp, height = 5.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.22f else 0.16f))
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(rowSurfaceColor())
+                    .border(panelBorder(), RoundedCornerShape(26.dp))
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text(language, "Dil seç", "Choose language", "Choisir la langue", "Elegir idioma", "选择语言", "भाषा चुनें", "Выберите язык"),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text(
+                        language,
+                        "Sistem dili desteklenmiyorsa uygulama otomatik olarak English kullanır.",
+                        "If the system language is not supported, the app automatically uses English.",
+                        "Si la langue du système n'est pas prise en charge, l'application utilise automatiquement English.",
+                        "Si el idioma del sistema no es compatible, la app usa English automáticamente.",
+                        "如果系统语言不受支持，应用会自动使用 English。",
+                        "यदि सिस्टम भाषा समर्थित नहीं है, तो ऐप अपने-आप English उपयोग करता है।",
+                        "Если язык системы не поддерживается, приложение автоматически использует English."
+                    ),
+                    color = secondaryTextColor(),
+                    lineHeight = 20.sp
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LanguageMode.entries.forEach { item ->
+                    LanguageOptionRow(
+                        language = language,
+                        mode = item,
+                        selected = item == languageMode,
+                        onClick = { onLanguageChange(item) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LanguageOptionRow(
+    language: AppLanguage,
+    mode: LanguageMode,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val background = if (selected) {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.13f else 0.08f)
+    } else {
+        rowSurfaceColor()
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        color = background,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.18f else 0.12f) else separatorColor()
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            LanguageCodePill(languageModeCode(mode), selected = selected)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    languageModeTitle(mode, language),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    languageModeSubtitle(mode, language),
+                    color = secondaryTextColor(),
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (selected) {
+                Icon(
+                    Icons.Rounded.Done,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun LanguageCodePill(code: String, selected: Boolean) {
+    Surface(
+        color = if (selected) {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.14f else 0.09f)
+        } else {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.07f else 0.045f)
+        },
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, separatorColor())
+    ) {
+        Text(
+            code,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp
+        )
     }
 }
 
@@ -2913,9 +3624,9 @@ private fun SettingsDialog(
                         title = text(language, "Tema", "Theme")
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ThemeChip(text(language, "Canlı", "Fresh"), appTheme == AppTheme.FRESH) { onThemeChange(AppTheme.FRESH) }
-                            ThemeChip(text(language, "Okyanus", "Ocean"), appTheme == AppTheme.OCEAN) { onThemeChange(AppTheme.OCEAN) }
-                            ThemeChip(text(language, "Günbatımı", "Sunset"), appTheme == AppTheme.SUNSET) { onThemeChange(AppTheme.SUNSET) }
+                            ThemeChip(text(language, "Canlı", "Fresh", "Vif", "Vivo", "鲜明", "ताज़ा", "Яркая"), appTheme == AppTheme.FRESH) { onThemeChange(AppTheme.FRESH) }
+                            ThemeChip(text(language, "Okyanus", "Ocean", "Océan", "Océano", "海洋", "महासागर", "Океан"), appTheme == AppTheme.OCEAN) { onThemeChange(AppTheme.OCEAN) }
+                            ThemeChip(text(language, "Günbatımı", "Sunset", "Coucher de soleil", "Atardecer", "日落", "सूर्यास्त", "Закат"), appTheme == AppTheme.SUNSET) { onThemeChange(AppTheme.SUNSET) }
                         }
                     }
                 }
@@ -2950,7 +3661,12 @@ private fun SettingsDialog(
                             text(
                                 language,
                                 "Uygulama seç, test gününü gir ve kullanım erişimi izniyle gün gün süreleri takip et. Kart ikonuna dokunarak ilgili uygulamayı açabilirsin.",
-                                "Pick apps, enter the current test day, and track daily minutes with Usage Access. Tap an app icon to open that app."
+                                "Pick apps, enter the current test day, and track daily minutes with Usage Access. Tap an app icon to open that app.",
+                                "Choisis des applications, saisis le jour de test actuel et suis les minutes quotidiennes avec l'accès à l'utilisation. Appuie sur l'icône d'une application pour l'ouvrir.",
+                                "Elige apps, introduce el día actual de prueba y sigue los minutos diarios con Acceso de uso. Toca el icono de una app para abrirla.",
+                                "选择应用，输入当前测试日，并通过使用情况访问跟踪每日分钟数。点按应用图标即可打开应用。",
+                                "ऐप चुनें, वर्तमान टेस्ट दिन दर्ज करें, और Usage Access से रोज़ाना मिनट ट्रैक करें। ऐप खोलने के लिए उसके आइकन पर टैप करें।",
+                                "Выберите приложения, укажите текущий день теста и отслеживайте ежедневные минуты через доступ к статистике использования. Коснитесь значка приложения, чтобы открыть его."
                             )
                         )
                     }
@@ -2958,7 +3674,7 @@ private fun SettingsDialog(
                 item {
                     SettingsAction(
                         icon = { Icon(Icons.Rounded.Email, contentDescription = null) },
-                        title = text(language, "Destek e-postası", "Support email"),
+                        title = text(language, "Destek e-postası", "Support email", "E-mail d'assistance", "Correo de soporte", "支持邮箱", "सहायता ईमेल", "Почта поддержки"),
                         subtitle = SUPPORT_MAIL,
                         onClick = onSendMail
                     )
@@ -2966,13 +3682,18 @@ private fun SettingsDialog(
                 item {
                     SettingsSection(
                         icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-                        title = text(language, "Hakkında", "About")
+                        title = text(language, "Hakkında", "About", "À propos", "Acerca de", "关于", "के बारे में", "О приложении")
                     ) {
                         Text(
                             text(
                                 language,
                                 "Closed Test Tracker v1.0\nMD Studio tarafından Google Play kapalı testlerini daha düzenli sürdürmek, test serilerini ve uygulama kullanım sürelerini gün gün takip etmek için geliştirildi.",
-                                "Closed Test Tracker v1.0\nDeveloped by MD Studio to keep Google Play closed tests more organized and track test streaks with daily app usage minutes."
+                                "Closed Test Tracker v1.0\nDeveloped by MD Studio to keep Google Play closed tests more organized and track test streaks with daily app usage minutes.",
+                                "Closed Test Tracker v1.0\nDéveloppée par MD Studio pour mieux organiser les tests fermés Google Play et suivre les séries de test avec les minutes d'utilisation quotidiennes.",
+                                "Closed Test Tracker v1.0\nDesarrollada por MD Studio para mantener las pruebas cerradas de Google Play más organizadas y seguir las rachas de prueba con los minutos de uso diarios.",
+                                "Closed Test Tracker v1.0\n由 MD Studio 开发，用于更有条理地管理 Google Play 封闭测试，并按天跟踪应用使用时长和测试连续天数。",
+                                "Closed Test Tracker v1.0\nMD Studio द्वारा बनाया गया, ताकि Google Play बंद परीक्षणों को अधिक व्यवस्थित रखा जा सके और दैनिक ऐप उपयोग मिनटों के साथ टेस्ट सीरीज़ को ट्रैक किया जा सके।",
+                                "Closed Test Tracker v1.0\nСоздано MD Studio, чтобы упорядочить закрытые тесты Google Play и отслеживать серии тестирования по ежедневным минутам использования приложений."
                             )
                         )
                     }
@@ -3063,18 +3784,15 @@ private fun AppPickerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf(SortMode.NAME) }
-    val filtered = remember(apps, query, sortMode) {
+    val listState = remember(sortMode, query) { LazyListState() }
+    val filtered = remember(apps, trackedPackageNames, query, sortMode) {
         val q = query.trim().lowercase()
         val base = apps
             .filterNot { it.packageName in trackedPackageNames }
             .filter {
                 q.isBlank() || it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q)
             }
-        when (sortMode) {
-            SortMode.NAME -> base.sortedBy { it.label.lowercase() }
-            SortMode.NEWEST -> base.sortedByDescending { it.firstInstallTime }
-            SortMode.OLDEST -> base.sortedBy { it.firstInstallTime }
-        }
+        sortInstalledApps(base, sortMode)
     }
 
     ModalBottomSheet(
@@ -3202,11 +3920,12 @@ private fun AppPickerSheet(
                     }
                 } else {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.heightIn(max = 560.dp),
                         contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        items(filtered, key = { it.packageName }) { app ->
+                        items(filtered, key = { "${sortMode.name}:${it.packageName}" }) { app ->
                             val publisher = playPublishers[app.packageName]
                             LaunchedEffect(app.packageName) {
                                 onLoadPublisher(app.packageName)
@@ -3272,16 +3991,13 @@ private fun AppPickerDialog(
 ) {
     var query by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf(SortMode.NAME) }
+    val listState = remember(sortMode, query) { LazyListState() }
     val filtered = remember(apps, query, sortMode) {
         val q = query.trim().lowercase()
         val base = apps.filter {
             q.isBlank() || it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q)
         }
-        when (sortMode) {
-            SortMode.NAME -> base.sortedBy { it.label.lowercase() }
-            SortMode.NEWEST -> base.sortedByDescending { it.firstInstallTime }
-            SortMode.OLDEST -> base.sortedBy { it.firstInstallTime }
-        }
+        sortInstalledApps(base, sortMode)
     }
 
     AlertDialog(
@@ -3303,10 +4019,11 @@ private fun AppPickerDialog(
                 }
                 Text(text(language, "${filtered.size} uygulama", "${filtered.size} apps"))
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.heightIn(max = 430.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    items(filtered, key = { it.packageName }) { app ->
+                    items(filtered, key = { "${sortMode.name}:${it.packageName}" }) { app ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -3356,26 +4073,78 @@ private fun SortChip(label: String, selected: Boolean, onClick: () -> Unit) {
 private fun testUsageDays(
     context: android.content.Context,
     item: TrackedApp,
-    usageAccess: Boolean
+    usageAccess: Boolean,
+    dateFormat: DateDisplayFormat
 ): List<UsageDay> {
-    val formatter = SimpleDateFormat("MM.dd", Locale.getDefault())
     val currentDay = SeriesCalculator.currentDay(item)
-    return (1..14).map { testDay ->
-        val offsetFromToday = testDay - currentDay
-        val dayStart = SeriesCalculator.dayStartMillis(offsetFromToday)
-        val isFuture = offsetFromToday > 0
+    val lastVisibleDay = maxOf(14, currentDay)
+    val firstVisibleDay = if (lastVisibleDay > 14) lastVisibleDay - 13 else 1
+    val todayStart = SeriesCalculator.dayStartMillis(0)
+    return (firstVisibleDay..lastVisibleDay).map { testDay ->
+        val dayStart = SeriesCalculator.dayStartMillisForTestDay(item, testDay)
+        val isFuture = dayStart > todayStart
         UsageDay(
             index = testDay,
-            label = formatter.format(Date(dayStart)),
+            label = formatUsageDate(dayStart, dateFormat),
             minutes = if (usageAccess && !isFuture) {
                 UsageReader.usageMinutesByDay(context, item.packageName, dayStart)
             } else {
                 0L
             },
-            isToday = testDay == currentDay,
+            isToday = dayStart == todayStart,
             isFuture = isFuture
         )
     }
+}
+
+@Composable
+private fun rememberUsageDaysAsync(
+    context: android.content.Context,
+    item: TrackedApp,
+    usageAccess: Boolean,
+    refreshTick: Int,
+    dateFormat: DateDisplayFormat
+): List<UsageDay> {
+    val itemKey = remember(item) {
+        listOf(
+            item.packageName,
+            item.createdAtMillis,
+            item.startDayIndex,
+            item.completedAtMillis,
+            item.isArchived
+        )
+    }
+    val state by produceState(
+        initialValue = testUsageDays(context, item, false, dateFormat),
+        usageAccess,
+        refreshTick,
+        dateFormat,
+        itemKey
+    ) {
+        value = withContext(Dispatchers.Default) {
+            testUsageDays(context, item, usageAccess, dateFormat)
+        }
+    }
+    return state
+}
+
+private fun formatUsageDate(millis: Long, dateFormat: DateDisplayFormat): String {
+    val pattern = when (dateFormat) {
+        DateDisplayFormat.MONTH_DAY -> "MM.dd"
+        DateDisplayFormat.DAY_MONTH -> "dd.MM"
+    }
+    return SimpleDateFormat(pattern, Locale.getDefault()).format(Date(millis))
+}
+
+private fun dateFormatChipLabel(language: AppLanguage, format: DateDisplayFormat): String {
+    return when (format) {
+        DateDisplayFormat.MONTH_DAY -> text(language, "Ay.Gün", "Month.Day", "Mois.Jour", "Mes.Día", "月.日", "माह.दिन", "Мес.День")
+        DateDisplayFormat.DAY_MONTH -> text(language, "Gün.Ay", "Day.Month", "Jour.Mois", "Día.Mes", "日.月", "दिन.माह", "День.Мес")
+    }
+}
+
+private fun minuteLabel(language: AppLanguage): String {
+    return text(language, "dk", "min", "min", "min", "分钟", "मिनट", "мин")
 }
 
 

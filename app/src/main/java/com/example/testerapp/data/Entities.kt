@@ -1,4 +1,4 @@
-package com.example.testerapp.data
+package com.mdstudio.closedtesttracker.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
