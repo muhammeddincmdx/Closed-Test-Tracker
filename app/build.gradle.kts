@@ -13,8 +13,8 @@ android {
         applicationId = "com.mdstudio.closedtesttracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.0.16.5.2"
+        versionCode = 7
+        versionName = "0.0.19.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -83,5 +83,7 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.google.android.material:material:1.12.0")
+    implementation("com.google.android.play:app-update:2.1.0")
 }
+
 

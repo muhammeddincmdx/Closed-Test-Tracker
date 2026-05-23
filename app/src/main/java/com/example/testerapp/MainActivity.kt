@@ -131,6 +131,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.google.android.play.core.appupdate.AppUpdateInfo
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.install.model.UpdateAvailability
 import com.mdstudio.closedtesttracker.data.AppDatabase
 import com.mdstudio.closedtesttracker.data.TrackedApp
 import java.net.HttpURLConnection
@@ -527,6 +530,30 @@ private data class DaySetupTarget(
     val label: String,
     val initialDay: Int,
     val isNew: Boolean
+)
+
+private data class UsageSummary(
+    val days: List<UsageDay>,
+    val totalMinutes: Long,
+    val hasPartialDailyHistory: Boolean,
+    val isLoading: Boolean = false
+)
+
+private data class TodayUsageState(
+    val minutesByPackage: Map<String, Long> = emptyMap(),
+    val isLoading: Boolean = true
+)
+
+private enum class UsageRangeMode {
+    WINDOWED,
+    FULL
+}
+
+private data class PlayUpdateState(
+    val isAvailable: Boolean = false,
+    val availableVersionCode: Int? = null,
+    val stalenessDays: Int? = null,
+    val promptShown: Boolean = false
 )
 
 private fun text(
@@ -1080,10 +1107,27 @@ fun MainScreen(
     var usageAccess by remember { mutableStateOf(UsageReader.hasUsageAccess(context)) }
     var notificationAllowed by remember { mutableStateOf(hasNotificationPermission(context)) }
     var refreshTick by remember { mutableIntStateOf(0) }
+    var playUpdateState by remember { mutableStateOf(PlayUpdateState()) }
+    var updatePromptVisible by remember { mutableStateOf(false) }
     val homeListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
-    val apps = remember { installedApps(context.packageManager) }
+    var apps by remember { mutableStateOf(emptyList<InstalledApp>()) }
     val playPublishers = remember { mutableStateMapOf<String, String>() }
     val playPublisherRequested = remember { mutableStateMapOf<String, Boolean>() }
+    val appUpdateManager = remember { AppUpdateManagerFactory.create(context) }
+    val appVersionName = remember {
+        runCatching {
+            val info = if (Build.VERSION.SDK_INT >= 33) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            info.versionName ?: "-"
+        }.getOrDefault("-")
+    }
     val selectedItem = tracked.firstOrNull { it.packageName == selectedPackageName }
     val topTitle = when (screen) {
         AppScreen.SETTINGS -> text(language, "Ayarlar", "Settings")
@@ -1109,10 +1153,39 @@ fun MainScreen(
         }
     }
 
+    suspend fun refreshInstalledApps() {
+        apps = withContext(Dispatchers.Default) {
+            installedApps(context.packageManager)
+        }
+    }
+
+    fun refreshPlayUpdateState() {
+        appUpdateManager.appUpdateInfo
+            .addOnSuccessListener { appUpdateInfo: AppUpdateInfo ->
+                val isAvailable = appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
+                val availableVersionCode = if (isAvailable) appUpdateInfo.availableVersionCode() else null
+                playUpdateState = playUpdateState.copy(
+                    isAvailable = isAvailable,
+                    availableVersionCode = availableVersionCode,
+                    stalenessDays = if (isAvailable) appUpdateInfo.clientVersionStalenessDays() else null
+                )
+                if (isAvailable && !playUpdateState.promptShown) {
+                    updatePromptVisible = true
+                    playUpdateState = playUpdateState.copy(promptShown = true)
+                }
+            }
+            .addOnFailureListener {
+                playUpdateState = playUpdateState.copy(isAvailable = false, availableVersionCode = null, stalenessDays = null)
+            }
+    }
+
     LaunchedEffect(Unit) { observeTrackedApps { tracked = it } }
+    LaunchedEffect(Unit) { refreshInstalledApps() }
+    LaunchedEffect(Unit) { refreshPlayUpdateState() }
     LaunchedEffect(refreshTick) {
         usageAccess = UsageReader.hasUsageAccess(context)
         notificationAllowed = hasNotificationPermission(context)
+        refreshPlayUpdateState()
     }
     LaunchedEffect(usageAccess) {
         while (true) {
@@ -1125,6 +1198,9 @@ fun MainScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshTick++
+                lifecycleOwner.lifecycleScope.launch {
+                    refreshInstalledApps()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1135,6 +1211,9 @@ fun MainScreen(
     BackHandler(enabled = screen != AppScreen.HOME) {
         screen = AppScreen.HOME
         selectedPackageName = null
+    }
+    LaunchedEffect(showPicker) {
+        if (showPicker) refreshInstalledApps()
     }
 
     val activeTracked = tracked.filter { !it.isArchived && it.completedAtMillis == null }
@@ -1149,32 +1228,37 @@ fun MainScreen(
     val visibleUsagePackages = remember(tracked) {
         tracked.filterNot { it.isArchived }.map { it.packageName }
     }
-    val todayUsageMap by produceState(
-        initialValue = emptyMap<String, Long>(),
+    val todayUsageState by produceState(
+        initialValue = TodayUsageState(isLoading = true),
         usageAccess,
         refreshTick,
         visibleUsagePackages
     ) {
         value = if (!usageAccess || visibleUsagePackages.isEmpty()) {
-            emptyMap()
+            TodayUsageState(isLoading = false)
         } else {
-            withContext(Dispatchers.Default) {
-                UsageReader.todayUsageMinutesMap(context, visibleUsagePackages)
-            }
+            TodayUsageState(
+                minutesByPackage = withContext(Dispatchers.Default) {
+                    UsageReader.todayUsageMinutesMap(context, visibleUsagePackages)
+                },
+                isLoading = false
+            )
         }
     }
-    val missingTodayApps = if (usageAccess) {
+    val todayUsageMap = todayUsageState.minutesByPackage
+    val todayUsageLoading = todayUsageState.isLoading
+    val missingTodayApps = if (usageAccess && !todayUsageLoading) {
         activeTracked.filter { (todayUsageMap[it.packageName] ?: 0L) == 0L }
     } else {
         emptyList()
     }
-    val usedTodayCount = if (usageAccess) activeTracked.count { (todayUsageMap[it.packageName] ?: 0L) > 0L } else 0
-    val missingTodayCount = if (usageAccess) {
+    val usedTodayCount = if (usageAccess && !todayUsageLoading) activeTracked.count { (todayUsageMap[it.packageName] ?: 0L) > 0L } else 0
+    val missingTodayCount = if (usageAccess && !todayUsageLoading) {
         activeTracked.count { (todayUsageMap[it.packageName] ?: 0L) == 0L }
     } else {
-        activeTracked.size
+        0
     }
-    val todayTotalMinutes = if (usageAccess) {
+    val todayTotalMinutes = if (usageAccess && !todayUsageLoading) {
         visibleUsagePackages.sumOf { todayUsageMap[it] ?: 0L }
     } else {
         0L
@@ -1283,10 +1367,13 @@ fun MainScreen(
                             dateFormat = format
                             prefs.edit().putString(KEY_DATE_FORMAT, format.name).apply()
                         },
+                        appVersionName = appVersionName,
+                        playUpdateState = playUpdateState,
                         onRequestNotificationPermission = onRequestNotificationPermission,
                         onSendMail = { sendSupportMail(context, language) },
                         onDonate = { openDonationPage(context) },
-                        onOpenPolicyPage = { openPolicyPage(context) }
+                        onOpenPolicyPage = { openPolicyPage(context) },
+                        onOpenUpdate = { openPlayStorePage(context, context.packageName) }
                     )
                 }
 
@@ -1298,12 +1385,13 @@ fun MainScreen(
                         val appInfo = remember(apps, item.packageName) {
                             apps.firstOrNull { it.packageName == item.packageName }
                         }
-                        val usageDays = rememberUsageDaysAsync(
+                        val usageSummary = rememberUsageSummaryAsync(
                             context = context,
                             item = item,
                             usageAccess = usageAccess,
                             refreshTick = refreshTick,
-                            dateFormat = dateFormat
+                            dateFormat = dateFormat,
+                            rangeMode = UsageRangeMode.FULL
                         )
                         LaunchedEffect(item.packageName) {
                             ensurePlayPublisher(item.packageName)
@@ -1317,7 +1405,10 @@ fun MainScreen(
                             icon = appInfo?.icon,
                             playPublisherName = playPublishers[item.packageName],
                             language = language,
-                            usageDays = usageDays,
+                            usageDays = usageSummary.days,
+                            totalMinutes = usageSummary.totalMinutes,
+                            hasPartialDailyHistory = usageSummary.hasPartialDailyHistory,
+                            isUsageLoading = usageSummary.isLoading,
                             onOpenApp = { openTrackedApp(context, item.packageName) },
                             onOpenPlayStore = { openPlayStorePage(context, item.packageName) },
                             onEditDay = {
@@ -1398,12 +1489,13 @@ fun MainScreen(
                                         val appInfo = remember(apps, item.packageName) {
                                             apps.firstOrNull { it.packageName == item.packageName }
                                         }
-                                        val usageDays = rememberUsageDaysAsync(
+                                        val usageSummary = rememberUsageSummaryAsync(
                                             context = context,
                                             item = item,
                                             usageAccess = usageAccess,
                                             refreshTick = refreshTick,
-                                            dateFormat = dateFormat
+                                            dateFormat = dateFormat,
+                                            rangeMode = UsageRangeMode.WINDOWED
                                         )
                                         LaunchedEffect(item.packageName) {
                                             ensurePlayPublisher(item.packageName)
@@ -1413,7 +1505,9 @@ fun MainScreen(
                                             icon = appInfo?.icon,
                                             playPublisherName = playPublishers[item.packageName],
                                             language = language,
-                                            usageDays = usageDays,
+                                            usageDays = usageSummary.days,
+                                            totalMinutes = usageSummary.totalMinutes,
+                                            isUsageLoading = usageSummary.isLoading,
                                             onOpenApp = { openTrackedApp(context, item.packageName) },
                                             onClick = {
                                                 selectedPackageName = item.packageName
@@ -1570,6 +1664,44 @@ fun MainScreen(
                 deleteTarget = null
                 screen = AppScreen.HOME
                 selectedPackageName = null
+            }
+        )
+    }
+
+    if (updatePromptVisible && playUpdateState.isAvailable) {
+        ConfirmationSheet(
+            title = text(
+                language,
+                "Yeni güncelleme var",
+                "New update available",
+                "Nouvelle mise à jour disponible",
+                "Nueva actualización disponible",
+                "有新更新可用",
+                "नया अपडेट उपलब्ध है",
+                "Доступно новое обновление"
+            ),
+            message = text(
+                language,
+                buildString {
+                    append("Closed Test Tracker için yeni bir sürüm bulundu.")
+                    append(" İstersen şimdi Google Play üzerinden güncelleyebilirsin.")
+                },
+                buildString {
+                    append("A new version of Closed Test Tracker is available.")
+                    append(" You can update now through Google Play.")
+                },
+                "Une nouvelle version de Closed Test Tracker est disponible. Vous pouvez mettre à jour via Google Play.",
+                "Hay una nueva versión de Closed Test Tracker disponible. Puedes actualizar desde Google Play.",
+                "Closed Test Tracker 有新版本可用。你现在可以通过 Google Play 更新。",
+                "Closed Test Tracker का नया संस्करण उपलब्ध है। आप अभी Google Play से अपडेट कर सकते हैं।",
+                "Доступна новая версия Closed Test Tracker. Вы можете обновить приложение через Google Play."
+            ),
+            confirmLabel = text(language, "Güncelle", "Update", "Mettre à jour", "Actualizar", "更新", "अपडेट", "Обновить"),
+            dismissLabel = text(language, "Daha sonra", "Later", "Plus tard", "Más tarde", "稍后", "बाद में", "Позже"),
+            onDismiss = { updatePromptVisible = false },
+            onConfirm = {
+                updatePromptVisible = false
+                openPlayStorePage(context, context.packageName)
             }
         )
     }
@@ -1851,12 +1983,21 @@ private fun AppUsageCard(
     playPublisherName: String?,
     language: AppLanguage,
     usageDays: List<UsageDay>,
+    totalMinutes: Long,
+    isUsageLoading: Boolean,
     onOpenApp: () -> Unit,
     onClick: () -> Unit
 ) {
     val day = SeriesCalculator.currentDay(item)
     val today = usageDays.firstOrNull { it.isToday }?.minutes ?: 0L
-    val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
+    val usageLine = when {
+        isUsageLoading -> text(language, "Kullanım yükleniyor", "Loading usage")
+        else -> text(
+            language,
+            "Bugün $today ${minuteLabel(language)} | Toplam $totalMinutes ${minuteLabel(language)}",
+            "Today $today ${minuteLabel(language)} | Total $totalMinutes ${minuteLabel(language)}"
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -1898,11 +2039,7 @@ private fun AppUsageCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text(
-                        language,
-                        "Bugün $today ${minuteLabel(language)} | Toplam $total ${minuteLabel(language)}",
-                        "Today $today ${minuteLabel(language)} | Total $total ${minuteLabel(language)}"
-                    ),
+                    usageLine,
                     color = secondaryTextColor(),
                     fontSize = 14.sp,
                     maxLines = 1,
@@ -1957,6 +2094,9 @@ private fun DetailPage(
     playPublisherName: String?,
     language: AppLanguage,
     usageDays: List<UsageDay>,
+    totalMinutes: Long,
+    hasPartialDailyHistory: Boolean,
+    isUsageLoading: Boolean,
     onOpenApp: () -> Unit,
     onOpenPlayStore: () -> Unit,
     onEditDay: () -> Unit,
@@ -1967,9 +2107,10 @@ private fun DetailPage(
 ) {
     val day = SeriesCalculator.currentDay(item)
     val today = usageDays.firstOrNull { it.isToday }?.minutes ?: 0L
-    val total = usageDays.filterNot { it.isFuture }.sumOf { it.minutes }
+    val todayLabel = if (isUsageLoading) text(language, "Yükleniyor", "Loading") else "$today ${minuteLabel(language)}"
+    val totalLabel = if (isUsageLoading) text(language, "Yükleniyor", "Loading") else "$totalMinutes ${minuteLabel(language)}"
     val max = usageDays.maxOfOrNull { it.minutes } ?: 0L
-    val hasUsageData = usageDays.any { !it.isFuture && it.minutes > 0L }
+    val hasUsageData = !isUsageLoading && usageDays.any { !it.isFuture && it.minutes > 0L }
     var viewMode by rememberSaveable(item.packageName) { mutableStateOf(DetailViewMode.GRAPH) }
     val detailListState = rememberSaveable(item.packageName, saver = LazyListState.Saver) { LazyListState() }
 
@@ -2014,8 +2155,8 @@ private fun DetailPage(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatTile(text(language, "Gün", "Day"), "$day/14", Modifier.weight(1f))
-                        StatTile(text(language, "Bugün", "Today"), "$today ${minuteLabel(language)}", Modifier.weight(1f))
-                        StatTile(text(language, "Toplam", "Total"), "$total ${minuteLabel(language)}", Modifier.weight(1f))
+                        StatTile(text(language, "Bugün", "Today"), todayLabel, Modifier.weight(1f))
+                        StatTile(text(language, "Toplam", "Total"), totalLabel, Modifier.weight(1f))
                     }
 
                     UsageBars(usageDays, max)
@@ -2121,7 +2262,9 @@ private fun DetailPage(
                     ) {
                         val firstVisibleDay = usageDays.firstOrNull()?.index ?: 1
                         val lastVisibleDay = usageDays.lastOrNull()?.index ?: 14
-                        val summaryTitle = if (lastVisibleDay > 14) {
+                        val summaryTitle = if (firstVisibleDay == 1 && lastVisibleDay > 14) {
+                            text(language, "1-$lastVisibleDay. gün özeti", "Day 1-$lastVisibleDay summary")
+                        } else if (lastVisibleDay > 14) {
                             text(language, "$firstVisibleDay-$lastVisibleDay. gün özeti", "Day $firstVisibleDay-$lastVisibleDay summary")
                         } else {
                             text(language, "14 günlük özet", "14-day summary")
@@ -2143,7 +2286,23 @@ private fun DetailPage(
                         color = secondaryTextColor(),
                         fontSize = 12.sp
                     )
-                    if (!hasUsageData) {
+                    if (hasPartialDailyHistory) {
+                        Text(
+                            text(
+                                language,
+                                "Android bu uygulama için eski günlerin günlük dökümünü eksik veriyor. Toplam süre geniş aralık toplamından hesaplanır; grafik ve yazılı özet sadece cihazın gün gün verdiği kayıtları gösterir.",
+                                "Android returns incomplete daily history for this app. Total time is calculated from the broad range total; the graph and text summary show only daily records available from the device."
+                            ),
+                            color = secondaryTextColor(),
+                            fontSize = 12.sp
+                        )
+                    }
+                    if (isUsageLoading) {
+                        EmptyDetailState(
+                            title = text(language, "Kullanım yükleniyor", "Loading usage"),
+                            body = text(language, "Günlük ve toplam süre cihazdan okunuyor.", "Daily and total time is being read from the device.")
+                        )
+                    } else if (!hasUsageData) {
                         EmptyDetailState(
                             title = text(language, "Henüz kullanım verisi yok", "No usage data yet"),
                             body = text(
@@ -2620,10 +2779,13 @@ private fun SettingsPage(
     onThemeModeChange: (AppThemeMode) -> Unit,
     onReminderHourChange: (Int) -> Unit,
     onDateFormatChange: (DateDisplayFormat) -> Unit,
+    appVersionName: String,
+    playUpdateState: PlayUpdateState,
     onRequestNotificationPermission: () -> Unit,
     onSendMail: () -> Unit,
     onDonate: () -> Unit,
-    onOpenPolicyPage: () -> Unit
+    onOpenPolicyPage: () -> Unit,
+    onOpenUpdate: () -> Unit
 ) {
     LazyColumn(
         modifier = modifier
@@ -2674,6 +2836,86 @@ private fun SettingsPage(
                             ThemeChip(dateFormatChipLabel(language, DateDisplayFormat.DAY_MONTH), dateFormat == DateDisplayFormat.DAY_MONTH) {
                                 onDateFormatChange(DateDisplayFormat.DAY_MONTH)
                             }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SettingsCard {
+                SettingsSection(
+                    icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                    title = text(language, "Sürüm", "Version", "Version", "Versión", "版本", "संस्करण", "Версия")
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text(
+                                language,
+                                "Yüklü sürüm: $appVersionName",
+                                "Installed version: $appVersionName",
+                                "Version installée : $appVersionName",
+                                "Versión instalada: $appVersionName",
+                                "已安装版本：$appVersionName",
+                                "इंस्टॉल किया गया संस्करण: $appVersionName",
+                                "Установленная версия: $appVersionName"
+                            ),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (playUpdateState.isAvailable) {
+                            Text(
+                                text(
+                                    language,
+                                    "Yeni güncelleme var",
+                                    "New update available",
+                                    "Nouvelle mise à jour disponible",
+                                    "Nueva actualización disponible",
+                                    "有新更新可用",
+                                    "नया अपडेट उपलब्ध है",
+                                    "Доступно новое обновление"
+                                ),
+                                color = secondaryTextColor()
+                            )
+                            Text(
+                                text(
+                                    language,
+                                    "Güncelleme ile gelen değişiklikleri görmek ve yüklemek için Google Play sayfasını aç.",
+                                    "Open the Google Play page to review what's new and install the update.",
+                                    "Ouvrez Google Play pour voir les nouveautés et installer la mise à jour.",
+                                    "Abre Google Play para ver las novedades e instalar la actualización.",
+                                    "打开 Google Play 查看更新内容并安装更新。",
+                                    "नया क्या है देखने और अपडेट इंस्टॉल करने के लिए Google Play खोलें।",
+                                    "Откройте Google Play, чтобы посмотреть список изменений и установить обновление."
+                                ),
+                                color = secondaryTextColor()
+                            )
+                            Button(
+                                onClick = onOpenUpdate,
+                                shape = RoundedCornerShape(18.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = rowSurfaceColor(),
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                                border = panelBorder(),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.size(8.dp))
+                                Text(text(language, "Google Play'de aç", "Open in Google Play", "Ouvrir dans Google Play", "Abrir en Google Play", "在 Google Play 中打开", "Google Play में खोलें", "Открыть в Google Play"))
+                            }
+                        } else {
+                            Text(
+                                text(
+                                    language,
+                                    "Yeni güncelleme görünmüyor.",
+                                    "No new update is currently available.",
+                                    "Aucune nouvelle mise à jour n'est disponible pour le moment.",
+                                    "No hay una nueva actualización disponible en este momento.",
+                                    "当前没有新的更新可用。",
+                                    "इस समय कोई नया अपडेट उपलब्ध नहीं है।",
+                                    "Сейчас новое обновление недоступно."
+                                ),
+                                color = secondaryTextColor()
+                            )
                         }
                     }
                 }
@@ -2862,7 +3104,18 @@ private fun UsageTimelineGrid(language: AppLanguage, days: List<UsageDay>) {
     val minLabel = minuteLabel(language)
     val firstVisibleDay = days.firstOrNull()?.index ?: 1
     val lastVisibleDay = days.lastOrNull()?.index ?: 14
-    val rangeLabel = if (lastVisibleDay > 14) {
+    val rangeLabel = if (firstVisibleDay == 1 && lastVisibleDay > 14) {
+        text(
+            language,
+            "Tüm seri",
+            "Full series",
+            "Série complète",
+            "Serie completa",
+            "完整系列",
+            "पूरी सीरीज़",
+            "Вся серия"
+        )
+    } else if (lastVisibleDay > 14) {
         text(language, "Son 14 gün", "Last 14 days", "14 derniers jours", "Últimos 14 días", "最近 14 天", "पिछले 14 दिन", "Последние 14 дней")
     } else {
         text(language, "14 gün", "14 days", "14 jours", "14 días", "14 天", "14 दिन", "14 дней")
@@ -4071,14 +4324,17 @@ private fun SortChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 private fun testUsageDays(
-    context: android.content.Context,
     item: TrackedApp,
-    usageAccess: Boolean,
-    dateFormat: DateDisplayFormat
+    dateFormat: DateDisplayFormat,
+    rangeMode: UsageRangeMode,
+    usageMinutesByStart: Map<Long, Long>
 ): List<UsageDay> {
     val currentDay = SeriesCalculator.currentDay(item)
-    val lastVisibleDay = maxOf(14, currentDay)
-    val firstVisibleDay = if (lastVisibleDay > 14) lastVisibleDay - 13 else 1
+    val lastVisibleDay = currentDay
+    val firstVisibleDay = when (rangeMode) {
+        UsageRangeMode.FULL -> 1
+        UsageRangeMode.WINDOWED -> if (lastVisibleDay > 14) lastVisibleDay - 13 else 1
+    }
     val todayStart = SeriesCalculator.dayStartMillis(0)
     return (firstVisibleDay..lastVisibleDay).map { testDay ->
         val dayStart = SeriesCalculator.dayStartMillisForTestDay(item, testDay)
@@ -4086,8 +4342,8 @@ private fun testUsageDays(
         UsageDay(
             index = testDay,
             label = formatUsageDate(dayStart, dateFormat),
-            minutes = if (usageAccess && !isFuture) {
-                UsageReader.usageMinutesByDay(context, item.packageName, dayStart)
+            minutes = if (!isFuture) {
+                usageMinutesByStart[dayStart] ?: 0L
             } else {
                 0L
             },
@@ -4097,14 +4353,33 @@ private fun testUsageDays(
     }
 }
 
+private fun totalUsageMinutesForSeries(
+    item: TrackedApp,
+    usageAccess: Boolean,
+    usageMinutesByStart: Map<Long, Long>
+): Long {
+    if (!usageAccess) return 0L
+    val currentDay = SeriesCalculator.currentDay(item)
+    val todayStart = SeriesCalculator.dayStartMillis(0)
+    return (1..currentDay).sumOf { testDay ->
+        val dayStart = SeriesCalculator.dayStartMillisForTestDay(item, testDay)
+        if (dayStart > todayStart) {
+            0L
+        } else {
+            usageMinutesByStart[dayStart] ?: 0L
+        }
+    }
+}
+
 @Composable
-private fun rememberUsageDaysAsync(
+private fun rememberUsageSummaryAsync(
     context: android.content.Context,
     item: TrackedApp,
     usageAccess: Boolean,
     refreshTick: Int,
-    dateFormat: DateDisplayFormat
-): List<UsageDay> {
+    dateFormat: DateDisplayFormat,
+    rangeMode: UsageRangeMode
+): UsageSummary {
     val itemKey = remember(item) {
         listOf(
             item.packageName,
@@ -4115,14 +4390,61 @@ private fun rememberUsageDaysAsync(
         )
     }
     val state by produceState(
-        initialValue = testUsageDays(context, item, false, dateFormat),
+        initialValue = UsageSummary(
+            days = testUsageDays(item, dateFormat, rangeMode, emptyMap()),
+            totalMinutes = 0L,
+            hasPartialDailyHistory = false,
+            isLoading = true
+        ),
         usageAccess,
         refreshTick,
         dateFormat,
+        rangeMode,
         itemKey
     ) {
         value = withContext(Dispatchers.Default) {
-            testUsageDays(context, item, usageAccess, dateFormat)
+            val currentDay = SeriesCalculator.currentDay(item)
+            val seriesStart = SeriesCalculator.dayStartMillisForTestDay(item, 1)
+            val usageMinutesByStart = if (usageAccess && currentDay > 0) {
+                UsageReader.mergedUsageMinutesByDayMap(
+                    context = context,
+                    packageName = item.packageName,
+                    startMillis = seriesStart,
+                    endMillis = System.currentTimeMillis()
+                )
+            } else {
+                emptyMap()
+            }
+            val eventMinutesByStart = if (usageAccess && currentDay > 0) {
+                UsageReader.usageMinutesByDayMapFromEvents(
+                    context = context,
+                    packageName = item.packageName,
+                    startMillis = seriesStart,
+                    endMillis = System.currentTimeMillis()
+                )
+            } else {
+                emptyMap()
+            }
+            val dailyTotal = totalUsageMinutesForSeries(item, usageAccess, usageMinutesByStart)
+            val eventTotal = totalUsageMinutesForSeries(item, usageAccess, eventMinutesByStart)
+            val bestTotal = if (usageAccess && currentDay > 0) {
+                UsageReader.bestEffortTotalUsageMinutes(
+                    context = context,
+                    packageName = item.packageName,
+                    seriesStartMillis = seriesStart,
+                    dailyTotalMinutes = dailyTotal,
+                    eventTotalMinutes = eventTotal
+                )
+            } else {
+                0L
+            }
+            val days = testUsageDays(item, dateFormat, rangeMode, usageMinutesByStart)
+            UsageSummary(
+                days = days,
+                totalMinutes = bestTotal,
+                hasPartialDailyHistory = bestTotal > dailyTotal,
+                isLoading = false
+            )
         }
     }
     return state
