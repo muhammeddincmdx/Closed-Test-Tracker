@@ -2,7 +2,10 @@
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
@@ -1200,12 +1203,41 @@ fun MainScreen(
                 refreshTick++
                 lifecycleOwner.lifecycleScope.launch {
                     refreshInstalledApps()
+                    delay(700)
+                    refreshTick++
+                    delay(1_800)
+                    refreshTick++
                 }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    DisposableEffect(Unit) {
+        val packageFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addDataScheme("package")
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                lifecycleOwner.lifecycleScope.launch {
+                    delay(250)
+                    refreshInstalledApps()
+                }
+            }
+        }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            packageFilter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        onDispose {
+            runCatching { context.unregisterReceiver(receiver) }
         }
     }
     BackHandler(enabled = screen != AppScreen.HOME) {

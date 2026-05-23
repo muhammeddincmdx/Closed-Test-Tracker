@@ -17,3 +17,6 @@ current-theme.png
 *.iml
 *.log
 captures/
+
+.migration/
+.tmp/
