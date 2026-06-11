@@ -117,6 +117,8 @@ Recent git log highlights:
 - `9ab603f Handle back from settings`
 - `70442f0 Initial Closed Test Tracker app`
 
+- 2026-06-11: Reusable features exported to mobil-app-collected-data-kotlin-jetpack-compose as feature folders 01-08.
+
 ## Open Tasks / Next Actions
 
 - Verify the current dirty working tree before any release work; decide which local changes should be committed and which generated artifacts should be ignored/removed.
@@ -232,3 +234,4 @@ Important: do not run uninstall/clear-data commands unless the user explicitly a
 - Whether the debug live overlay should become a production feature needs product and policy approval.
 - Full historical ChatGPT/Codex conversations are not embedded in this repo; this handoff may miss decisions that only existed in chat.
 - Final production privacy policy/terms URLs and current store listing text should be verified externally before release.
+
