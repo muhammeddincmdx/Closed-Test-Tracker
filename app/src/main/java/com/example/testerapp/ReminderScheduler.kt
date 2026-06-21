@@ -1,8 +1,8 @@
 package com.mdstudio.closedtesttracker
 
 import android.content.Context
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
@@ -17,13 +17,13 @@ object ReminderScheduler {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val hour = prefs.getInt(KEY_REMINDER_HOUR, 20).coerceIn(0, 23)
         val minute = prefs.getInt(KEY_REMINDER_MINUTE, 0).coerceIn(0, 59)
-        val request = PeriodicWorkRequestBuilder<ReminderWorker>(24, TimeUnit.HOURS)
+        val request = OneTimeWorkRequestBuilder<ReminderWorker>()
             .setInitialDelay(nextDelayMillis(hour, minute), TimeUnit.MILLISECONDS)
             .build()
 
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+        WorkManager.getInstance(context).enqueueUniqueWork(
             WORK_NAME,
-            ExistingPeriodicWorkPolicy.UPDATE,
+            ExistingWorkPolicy.REPLACE,
             request
         )
     }

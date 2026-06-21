@@ -29,7 +29,6 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "tester_db"
                 ).addMigrations(MIGRATION_3_4)
-                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }

@@ -11,6 +11,9 @@ interface AppDao {
     @Query("SELECT * FROM TrackedApp ORDER BY createdAtMillis DESC, appLabel")
     fun observeAll(): Flow<List<TrackedApp>>
 
+    @Query("SELECT * FROM TrackedApp ORDER BY createdAtMillis DESC, appLabel")
+    suspend fun getAll(): List<TrackedApp>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(item: TrackedApp)
 

@@ -1,9 +1,15 @@
 .gradle/
+.gradle-user*/
+.android-local/
 .kotlin/
 .tools/
 build/
 app/build/
 local.properties
+
+# Signing secrets — keep the real credentials out of version control.
+# keystore.properties.example is the committed template.
+keystore.properties
 
 *.apk
 *.aab
@@ -17,6 +23,16 @@ current-theme.png
 *.iml
 *.log
 captures/
+.codex-remote-attachments/
+/device_backups/
+/tmp_emudb/
+/ctt_*.png
+/closedtesttracker_*.png
+/Screenshot_*.jpg
+/window.xml
+/report.pdf
+/generate_report.py
+/nul
 
 .migration/
 .tmp/

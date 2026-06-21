@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
@@ -20,6 +21,9 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.Html
+import android.util.Log
+import android.view.View
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -40,9 +44,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +61,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -79,11 +88,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material.icons.Icons
@@ -100,15 +112,19 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -116,25 +132,33 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.core.view.drawToBitmap
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -142,8 +166,19 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.android.play.core.appupdate.AppUpdateInfo
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory
 import com.google.android.play.core.install.model.UpdateAvailability
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.AdListener
+import com.google.android.gms.ads.FullScreenContentCallback
+import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.rewarded.RewardedAd
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import com.mdstudio.closedtesttracker.data.AppDatabase
 import com.mdstudio.closedtesttracker.data.TrackedApp
+import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -155,18 +190,16 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class SortMode { NAME, NEWEST, OLDEST }
-enum class AppLanguage { TR, EN, FR, ES, ZH, HI, RU, AR }
-private enum class LanguageMode { SYSTEM, TR, EN, FR, ES, ZH, HI, RU, AR }
-enum class AppTheme { FRESH, OCEAN, SUNSET }
-enum class AppThemeMode { SYSTEM, LIGHT, DARK }
-enum class AppScreen { HOME, SETTINGS, DETAIL }
-enum class HomeFilter { ACTIVE, COMPLETED, ARCHIVED, ALL }
+// Public UI model enums (SortMode, AppLanguage, AppTheme, AppThemeMode,
+// AppScreen, HomeFilter) and the InstalledApp data class live in AppModels.kt.
+private enum class LanguageMode { SYSTEM, TR, EN, FR, ES, ZH, HI, RU, AR, DE, JA, PT, ID }
 private enum class DateDisplayFormat { MONTH_DAY, DAY_MONTH }
 private enum class OverviewFilter { ALL, ACTIVE, COMPLETED, ARCHIVED }
+private enum class OverviewLayout { LIST, GRID }
 private enum class DetailViewMode { GRAPH, TEXT }
 private enum class ConfirmAction { FINISH, REACTIVATE, ARCHIVE, RESTORE }
 
@@ -180,9 +213,50 @@ private const val KEY_REMINDER_HOUR = "reminder_hour"
 private const val KEY_REMINDER_MINUTE = "reminder_minute"
 private const val KEY_PLAY_PUBLISHER_PREFIX = "play_publisher_"
 private const val KEY_LAST_UPDATE_NOTIFICATION_CODE = "last_update_notification_code"
+private const val KEY_LAST_SCREEN = "last_screen"
+private const val KEY_LAST_SELECTED_PACKAGE = "last_selected_package"
+private const val KEY_LAST_SCREEN_SAVED_AT = "last_screen_saved_at"
+private const val KEY_HOME_LIST_INDEX = "home_list_index"
+private const val KEY_HOME_LIST_OFFSET = "home_list_offset"
+private const val KEY_USAGE_TODAY_CACHE_PREFIX = "usage_today_cache_"
+private const val KEY_USAGE_TOTAL_CACHE_PREFIX = "usage_total_cache_"
+private const val LAST_SCREEN_RESTORE_TIMEOUT_MILLIS = 10L * 60L * 1000L
+private const val USAGE_REFRESH_MIN_INTERVAL_MILLIS = 60L * 1000L
+private const val USAGE_IDLE_REFRESH_INTERVAL_MILLIS = 2L * 60L * 1000L
+private const val KEY_LIVE_USAGE_OVERLAY = "live_usage_overlay"
+private const val BANNER_TEST_AD_UNIT_ID = "ca-app-pub-3940256099942544/6300978111"
+private const val BANNER_PROD_AD_UNIT_ID = "ca-app-pub-5011839648327891/4443133880"
+private const val REWARDED_TEST_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
+private const val REWARDED_PROD_AD_UNIT_ID = "ca-app-pub-5011839648327891/1816970548"
+private const val KEY_ONBOARDING_SHOWN = "onboarding_shown"
+private const val KEY_PRO_OFFER_SHOWN = "pro_offer_shown"
 private const val SUPPORT_MAIL = "mdstudiohelp@gmail.com"
 private const val DONATION_URL = "https://www.buymeacoffee.com/mdx0"
-private const val POLICY_URL = "https://sites.google.com/view/infomdstudio/documenter-pdf-scanner-viewer?"
+private const val POLICY_URL = "https://sites.google.com/view/infomdstudio/closed-test-tracker?authuser=0"
+private const val MD_STUDIO_URL = "https://sites.google.com/view/infomdstudio"
+
+private fun readUsageCache(
+    prefs: android.content.SharedPreferences,
+    packageNames: Collection<String>,
+    prefix: String
+): Map<String, Long> {
+    return packageNames.mapNotNull { packageName ->
+        val key = "$prefix$packageName"
+        if (prefs.contains(key)) packageName to prefs.getLong(key, 0L) else null
+    }.toMap()
+}
+
+private fun writeUsageCache(
+    prefs: android.content.SharedPreferences,
+    values: Map<String, Long>,
+    prefix: String
+) {
+    val editor = prefs.edit()
+    values.forEach { (packageName, minutes) ->
+        editor.putLong("$prefix$packageName", minutes)
+    }
+    editor.apply()
+}
 
 private fun appColors(theme: AppTheme, dark: Boolean) = if (dark) {
     darkColorScheme(
@@ -518,13 +592,7 @@ private fun accentGradient(theme: AppTheme) = when (theme) {
     AppTheme.SUNSET -> listOf(Color(0xFFF1E4D0), Color(0xFFD6D6D6), Color(0xFFB8B8B8))
 }
 
-data class InstalledApp(
-    val packageName: String,
-    val label: String,
-    val icon: Bitmap,
-    val firstInstallTime: Long,
-    val lastUpdateTime: Long
-)
+// InstalledApp data class lives in AppModels.kt
 
 private data class UsageDay(
     val index: Int,
@@ -574,7 +642,11 @@ private fun text(
     zh: String = en,
     hi: String = en,
     ru: String = en,
-    ar: String = en
+    ar: String = en,
+    de: String = en,
+    ja: String = en,
+    pt: String = en,
+    id: String = en
 ): String {
     val selected = when (language) {
         AppLanguage.TR -> tr
@@ -585,6 +657,10 @@ private fun text(
         AppLanguage.HI -> hi
         AppLanguage.RU -> ru
         AppLanguage.AR -> ar
+        AppLanguage.DE -> de
+        AppLanguage.JA -> ja
+        AppLanguage.PT -> pt
+        AppLanguage.ID -> id
     }
     return if (language != AppLanguage.EN && selected == en) {
         fallbackText(language, en)
@@ -604,6 +680,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "प्रकाशक: $name"
             AppLanguage.RU -> "Издатель: $name"
             AppLanguage.AR -> "الناشر: $name"
+            AppLanguage.DE -> "Herausgeber: $name"
+            AppLanguage.JA -> "公開元: $name"
+            AppLanguage.PT -> "Editor: $name"
+            AppLanguage.ID -> "Penerbit: $name"
             AppLanguage.EN -> en
         }
     }
@@ -616,6 +696,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "इंस्टॉल किया गया संस्करण: $value"
             AppLanguage.RU -> "Установленная версия: $value"
             AppLanguage.AR -> "الإصدار المثبت: $value"
+            AppLanguage.DE -> "Installierte Version: $value"
+            AppLanguage.JA -> "インストール済みバージョン: $value"
+            AppLanguage.PT -> "Versão instalada: $value"
+            AppLanguage.ID -> "Versi terpasang: $value"
             else -> en
         }
     }
@@ -628,6 +712,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "संस्करण $value"
             AppLanguage.RU -> "Версия $value"
             AppLanguage.AR -> "الإصدار $value"
+            AppLanguage.DE -> "Version $value"
+            AppLanguage.JA -> "バージョン $value"
+            AppLanguage.PT -> "Versão $value"
+            AppLanguage.ID -> "Versi $value"
             else -> en
         }
     }
@@ -640,6 +728,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "दिन $value"
             AppLanguage.RU -> "День $value"
             AppLanguage.AR -> "اليوم $value"
+            AppLanguage.DE -> "Tag $value"
+            AppLanguage.JA -> "$value 日目"
+            AppLanguage.PT -> "Dia $value"
+            AppLanguage.ID -> "Hari $value"
             else -> en
         }
     }
@@ -652,6 +744,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "$value ऐप उपलब्ध"
             AppLanguage.RU -> "Доступно приложений: $value"
             AppLanguage.AR -> "$value تطبيق متاح"
+            AppLanguage.DE -> "$value Apps verfügbar"
+            AppLanguage.JA -> "$value 個のアプリが利用可能"
+            AppLanguage.PT -> "$value apps disponíveis"
+            AppLanguage.ID -> "$value aplikasi tersedia"
             else -> en
         }
     }
@@ -664,6 +760,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "$value ऐप"
             AppLanguage.RU -> "$value приложений"
             AppLanguage.AR -> "$value تطبيق"
+            AppLanguage.DE -> "$value Apps"
+            AppLanguage.JA -> "$value 個のアプリ"
+            AppLanguage.PT -> "$value apps"
+            AppLanguage.ID -> "$value aplikasi"
             else -> en
         }
     }
@@ -676,6 +776,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "दैनिक सीरीज़ जाँच लगभग $time पर नियोजित है।"
             AppLanguage.RU -> "Ежедневная проверка серии запланирована примерно на $time."
             AppLanguage.AR -> "تمت جدولة فحص السلسلة اليومي حوالي $time."
+            AppLanguage.DE -> "Die tägliche Serienprüfung ist gegen $time geplant."
+            AppLanguage.JA -> "毎日の継続確認は $time 頃に予定されています。"
+            AppLanguage.PT -> "A verificação diária está agendada para cerca de $time."
+            AppLanguage.ID -> "Pemeriksaan rangkaian harian dijadwalkan sekitar $time."
             else -> en
         }
     }
@@ -689,6 +793,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "दिन 1-$value सारांश"
             AppLanguage.RU -> "Сводка дней 1-$value"
             AppLanguage.AR -> "ملخص الأيام 1-$value"
+            AppLanguage.DE -> "Zusammenfassung Tag 1-$value"
+            AppLanguage.JA -> "1〜$value 日目の概要"
+            AppLanguage.PT -> "Resumo dos dias 1-$value"
+            AppLanguage.ID -> "Ringkasan hari 1-$value"
             AppLanguage.EN -> en
         }
     }
@@ -703,6 +811,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "दिन $first-$last सारांश"
             AppLanguage.RU -> "Сводка дней $first-$last"
             AppLanguage.AR -> "ملخص الأيام $first-$last"
+            AppLanguage.DE -> "Zusammenfassung Tag $first-$last"
+            AppLanguage.JA -> "$first〜$last 日目の概要"
+            AppLanguage.PT -> "Resumo dos dias $first-$last"
+            AppLanguage.ID -> "Ringkasan hari $first-$last"
             AppLanguage.EN -> en
         }
     }
@@ -715,6 +827,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "$name को पूरा चिह्नित किया जाएगा। आप बाद में फिर सक्रिय कर सकते हैं।"
             AppLanguage.RU -> "$name будет отмечено как завершенное. Позже можно активировать снова."
             AppLanguage.AR -> "سيتم وضع علامة مكتمل على $name. يمكنك إعادة تفعيله لاحقاً."
+            AppLanguage.DE -> "$name wird als abgeschlossen markiert. Du kannst die App später reaktivieren."
+            AppLanguage.JA -> "$name を完了として記録します。後で再開できます。"
+            AppLanguage.PT -> "$name será marcado como concluído. Você poderá reativá-lo depois."
+            AppLanguage.ID -> "$name akan ditandai selesai. Anda dapat mengaktifkannya lagi nanti."
             else -> en
         }
     }
@@ -727,6 +843,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "$name सक्रिय सूची में वापस आएगा और streak काउंटर जारी रहेगा।"
             AppLanguage.RU -> "$name вернется в активный список, счетчик серии продолжится."
             AppLanguage.AR -> "سيعود $name إلى القائمة النشطة وسيستمر عداد السلسلة."
+            AppLanguage.DE -> "$name kehrt zur aktiven Liste zurück und die Serie wird fortgesetzt."
+            AppLanguage.JA -> "$name は有効な一覧に戻り、継続日数の計測が続きます。"
+            AppLanguage.PT -> "$name voltará à lista ativa e a sequência continuará."
+            AppLanguage.ID -> "$name akan kembali ke daftar aktif dan rangkaian akan berlanjut."
             else -> en
         }
     }
@@ -739,6 +859,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "$name आर्काइव में जाएगा। आप बाद में वापस ला सकते हैं।"
             AppLanguage.RU -> "$name будет перемещено в архив. Позже можно восстановить."
             AppLanguage.AR -> "سيتم نقل $name إلى الأرشيف. يمكنك استعادته لاحقاً."
+            AppLanguage.DE -> "$name wird archiviert. Du kannst die App später wiederherstellen."
+            AppLanguage.JA -> "$name をアーカイブします。後で復元できます。"
+            AppLanguage.PT -> "$name será movido para o arquivo. Você poderá restaurá-lo depois."
+            AppLanguage.ID -> "$name akan dipindahkan ke arsip. Anda dapat memulihkannya nanti."
             else -> en
         }
     }
@@ -751,6 +875,10 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "$name आर्काइव से वापस आएगा और सूची में फिर दिखेगा।"
             AppLanguage.RU -> "$name будет восстановлено из архива и снова показано в списке."
             AppLanguage.AR -> "ستتم استعادة $name من الأرشيف وسيظهر في القائمة مرة أخرى."
+            AppLanguage.DE -> "$name wird aus dem Archiv wiederhergestellt und erneut in der Liste angezeigt."
+            AppLanguage.JA -> "$name をアーカイブから復元し、一覧に再表示します。"
+            AppLanguage.PT -> "$name será restaurado do arquivo e voltará à lista."
+            AppLanguage.ID -> "$name akan dipulihkan dari arsip dan tampil lagi di daftar."
             else -> en
         }
     }
@@ -763,16 +891,401 @@ private fun fallbackText(language: AppLanguage, en: String): String {
             AppLanguage.HI -> "$name को सूची से हटाएं? Android usage history रहेगा, केवल tracking record हटेगा।"
             AppLanguage.RU -> "Удалить $name из списка? История Android останется, удалится только запись отслеживания."
             AppLanguage.AR -> "هل تريد إزالة $name من القائمة؟ سيبقى سجل استخدام Android، وسيتم حذف سجل المتابعة فقط."
+            AppLanguage.DE -> "$name aus der Liste entfernen? Der Android-Nutzungsverlauf bleibt erhalten; nur der Tracking-Eintrag wird gelöscht."
+            AppLanguage.JA -> "$name を一覧から削除しますか？Android の利用履歴は残り、追跡データのみ削除されます。"
+            AppLanguage.PT -> "Remover $name da lista? O histórico de uso do Android será mantido; apenas o registro será excluído."
+            AppLanguage.ID -> "Hapus $name dari daftar? Riwayat penggunaan Android tetap ada; hanya catatan pelacakan yang dihapus."
             else -> en
         }
     }
-    fun all(fr: String, es: String, zh: String, hi: String, ru: String, ar: String) = mapOf(
+    fun auto(language: AppLanguage, value: String): String {
+        val de = mapOf(
+            "Loading" to "Wird geladen",
+            "Language" to "Sprache",
+            "System default" to "Systemstandard",
+            "Settings" to "Einstellungen",
+            "Back" to "Zurück",
+            "Add app" to "App hinzufügen",
+            "Summaries" to "Zusammenfassungen",
+            "Tracking summary" to "Tracking-Übersicht",
+            "App summaries" to "App-Übersichten",
+            "Missing today" to "Heute fehlend",
+            "Used" to "Genutzt",
+            "Missing" to "Fehlend",
+            "Done" to "Fertig",
+            "Today" to "Heute",
+            "Streak" to "Serie",
+            "Active" to "Aktiv",
+            "Archive" to "Archiv",
+            "All" to "Alle",
+            "Open" to "Öffnen",
+            "No apps yet" to "Noch keine Apps",
+            "Choose the apps to track first." to "Wähle zuerst die Apps aus, die du verfolgen möchtest.",
+            "Pick app" to "App auswählen",
+            "This filter is empty" to "Dieser Filter ist leer",
+            "Apps" to "Apps",
+            "Loading usage" to "Nutzung wird geladen",
+            "Usage permission required" to "Nutzungszugriff erforderlich",
+            "Publisher loading" to "Publisher wird geladen",
+            "Day" to "Tag",
+            "Total" to "Gesamt",
+            "Open app" to "App öffnen",
+            "Manage" to "Verwalten",
+            "Archived" to "Archiviert",
+            "Live" to "Aktiv",
+            "Set day" to "Tag festlegen",
+            "Finish" to "Beenden",
+            "Reactivate" to "Reaktivieren",
+            "Restore" to "Wiederherstellen",
+            "Delete" to "Löschen",
+            "Graph" to "Grafik",
+            "Text" to "Text",
+            "Cancel" to "Abbrechen",
+            "Save" to "Speichern",
+            "Date format" to "Datumsformat",
+            "Reminder time" to "Erinnerungszeit",
+            "Close" to "Schließen",
+            "Search" to "Suchen",
+            "Newest" to "Neueste",
+            "Oldest" to "Älteste",
+            "No results" to "Keine Ergebnisse",
+            "Minutes" to "Minuten",
+            "min" to "Min.",
+            "Detail" to "Details",
+            "Finish test?" to "Test beenden?",
+            "Reactivate?" to "Reaktivieren?",
+            "Archive?" to "Archivieren?",
+            "Restore?" to "Wiederherstellen?",
+            "Delete app" to "App löschen",
+            "New update available" to "Neues Update verfügbar",
+            "App updates" to "App-Updates",
+            "Update" to "Aktualisieren",
+            "Later" to "Später",
+            "Test day" to "Testtag",
+            "Selected day" to "Ausgewählter Tag",
+            "Version" to "Version",
+            "Open in Google Play" to "In Google Play öffnen",
+            "Appearance" to "Darstellung",
+            "System" to "System",
+            "Light" to "Hell",
+            "Dark" to "Dunkel",
+            "Notification permission" to "Benachrichtigungsberechtigung",
+            "Help" to "Hilfe",
+            "App info" to "App-Info",
+            "Purpose" to "Zweck",
+            "How to use" to "Verwendung",
+            "Note" to "Hinweis",
+            "Support email" to "Support-E-Mail",
+            "Full series" to "Gesamte Serie",
+            "Pending" to "Ausstehend",
+            "Choose" to "Auswählen",
+            "Choose language" to "Sprache auswählen",
+            "Theme" to "Design",
+            "Fresh" to "Frisch",
+            "Ocean" to "Ozean",
+            "Sunset" to "Sonnenuntergang",
+            "Name" to "Name",
+            "New" to "Neu",
+            "Old" to "Alt"
+        )
+        val ja = mapOf(
+            "Loading" to "読み込み中",
+            "Language" to "言語",
+            "System default" to "システム既定",
+            "Settings" to "設定",
+            "Back" to "戻る",
+            "Add app" to "アプリを追加",
+            "Summaries" to "概要",
+            "Tracking summary" to "追跡概要",
+            "App summaries" to "アプリ概要",
+            "Missing today" to "今日未使用",
+            "Used" to "使用済み",
+            "Missing" to "未使用",
+            "Done" to "完了",
+            "Today" to "今日",
+            "Streak" to "連続",
+            "Active" to "有効",
+            "Archive" to "アーカイブ",
+            "All" to "すべて",
+            "Open" to "開く",
+            "No apps yet" to "アプリはまだありません",
+            "Choose the apps to track first." to "まず追跡するアプリを選択してください。",
+            "Pick app" to "アプリを選択",
+            "This filter is empty" to "このフィルターは空です",
+            "Apps" to "アプリ",
+            "Loading usage" to "使用状況を読み込み中",
+            "Usage permission required" to "使用状況アクセスが必要です",
+            "Publisher loading" to "公開元を読み込み中",
+            "Day" to "日",
+            "Total" to "合計",
+            "Open app" to "アプリを開く",
+            "Manage" to "管理",
+            "Archived" to "アーカイブ済み",
+            "Live" to "進行中",
+            "Set day" to "日数を設定",
+            "Finish" to "終了",
+            "Reactivate" to "再開",
+            "Restore" to "復元",
+            "Delete" to "削除",
+            "Graph" to "グラフ",
+            "Text" to "テキスト",
+            "Cancel" to "キャンセル",
+            "Save" to "保存",
+            "Date format" to "日付形式",
+            "Reminder time" to "リマインダー時刻",
+            "Close" to "閉じる",
+            "Search" to "検索",
+            "Newest" to "新しい順",
+            "Oldest" to "古い順",
+            "No results" to "結果なし",
+            "Minutes" to "分",
+            "min" to "分",
+            "Detail" to "詳細",
+            "Finish test?" to "テストを終了しますか？",
+            "Reactivate?" to "再開しますか？",
+            "Archive?" to "アーカイブしますか？",
+            "Restore?" to "復元しますか？",
+            "Delete app" to "アプリを削除",
+            "New update available" to "新しい更新があります",
+            "App updates" to "アプリ更新",
+            "Update" to "更新",
+            "Later" to "後で",
+            "Test day" to "テスト日",
+            "Selected day" to "選択した日",
+            "Version" to "バージョン",
+            "Open in Google Play" to "Google Playで開く",
+            "Appearance" to "外観",
+            "System" to "システム",
+            "Light" to "ライト",
+            "Dark" to "ダーク",
+            "Notification permission" to "通知権限",
+            "Help" to "ヘルプ",
+            "App info" to "アプリ情報",
+            "Purpose" to "目的",
+            "How to use" to "使い方",
+            "Note" to "注記",
+            "Support email" to "サポートメール",
+            "Full series" to "全期間",
+            "Pending" to "保留中",
+            "Choose" to "選択",
+            "Choose language" to "言語を選択",
+            "Theme" to "テーマ",
+            "Fresh" to "フレッシュ",
+            "Ocean" to "オーシャン",
+            "Sunset" to "サンセット",
+            "Name" to "名前",
+            "New" to "新規",
+            "Old" to "古い"
+        )
+        val pt = mapOf(
+            "Loading" to "Carregando",
+            "Language" to "Idioma",
+            "System default" to "Padrão do sistema",
+            "Settings" to "Configurações",
+            "Back" to "Voltar",
+            "Add app" to "Adicionar app",
+            "Summaries" to "Resumos",
+            "Tracking summary" to "Resumo de acompanhamento",
+            "App summaries" to "Resumos dos apps",
+            "Missing today" to "Faltando hoje",
+            "Used" to "Usados",
+            "Missing" to "Faltando",
+            "Done" to "Concluído",
+            "Today" to "Hoje",
+            "Streak" to "Sequência",
+            "Active" to "Ativo",
+            "Archive" to "Arquivo",
+            "All" to "Todos",
+            "Open" to "Abrir",
+            "No apps yet" to "Ainda sem apps",
+            "Choose the apps to track first." to "Escolha primeiro os apps para acompanhar.",
+            "Pick app" to "Escolher app",
+            "This filter is empty" to "Este filtro está vazio",
+            "Apps" to "Apps",
+            "Loading usage" to "Carregando uso",
+            "Usage permission required" to "Permissão de uso necessária",
+            "Publisher loading" to "Carregando publicador",
+            "Day" to "Dia",
+            "Total" to "Total",
+            "Open app" to "Abrir app",
+            "Manage" to "Gerenciar",
+            "Archived" to "Arquivado",
+            "Live" to "Ativo",
+            "Set day" to "Definir dia",
+            "Finish" to "Finalizar",
+            "Reactivate" to "Reativar",
+            "Restore" to "Restaurar",
+            "Delete" to "Excluir",
+            "Graph" to "Gráfico",
+            "Text" to "Texto",
+            "Cancel" to "Cancelar",
+            "Save" to "Salvar",
+            "Date format" to "Formato de data",
+            "Reminder time" to "Hora do lembrete",
+            "Close" to "Fechar",
+            "Search" to "Pesquisar",
+            "Newest" to "Mais recentes",
+            "Oldest" to "Mais antigos",
+            "No results" to "Sem resultados",
+            "Minutes" to "Minutos",
+            "min" to "min",
+            "Detail" to "Detalhe",
+            "Finish test?" to "Finalizar teste?",
+            "Reactivate?" to "Reativar?",
+            "Archive?" to "Arquivar?",
+            "Restore?" to "Restaurar?",
+            "Delete app" to "Excluir app",
+            "New update available" to "Nova atualização disponível",
+            "App updates" to "Atualizações",
+            "Update" to "Atualizar",
+            "Later" to "Mais tarde",
+            "Test day" to "Dia de teste",
+            "Selected day" to "Dia selecionado",
+            "Version" to "Versão",
+            "Open in Google Play" to "Abrir no Google Play",
+            "Appearance" to "Aparência",
+            "System" to "Sistema",
+            "Light" to "Claro",
+            "Dark" to "Escuro",
+            "Notification permission" to "Permissão de notificação",
+            "Help" to "Ajuda",
+            "App info" to "Informações do app",
+            "Purpose" to "Objetivo",
+            "How to use" to "Como usar",
+            "Note" to "Nota",
+            "Support email" to "E-mail de suporte",
+            "Full series" to "Série completa",
+            "Pending" to "Pendente",
+            "Choose" to "Escolher",
+            "Choose language" to "Escolher idioma",
+            "Theme" to "Tema",
+            "Fresh" to "Novo",
+            "Ocean" to "Oceano",
+            "Sunset" to "Pôr do sol",
+            "Name" to "Nome",
+            "New" to "Novo",
+            "Old" to "Antigo"
+        )
+        val id = mapOf(
+            "Loading" to "Memuat",
+            "Language" to "Bahasa",
+            "System default" to "Default sistem",
+            "Settings" to "Pengaturan",
+            "Back" to "Kembali",
+            "Add app" to "Tambah aplikasi",
+            "Summaries" to "Ringkasan",
+            "Tracking summary" to "Ringkasan pelacakan",
+            "App summaries" to "Ringkasan aplikasi",
+            "Missing today" to "Belum dibuka hari ini",
+            "Used" to "Dipakai",
+            "Missing" to "Belum",
+            "Done" to "Selesai",
+            "Today" to "Hari ini",
+            "Streak" to "Rangkaian",
+            "Active" to "Aktif",
+            "Archive" to "Arsip",
+            "All" to "Semua",
+            "Open" to "Buka",
+            "No apps yet" to "Belum ada aplikasi",
+            "Choose the apps to track first." to "Pilih aplikasi yang ingin dilacak terlebih dahulu.",
+            "Pick app" to "Pilih aplikasi",
+            "This filter is empty" to "Filter ini kosong",
+            "Apps" to "Aplikasi",
+            "Loading usage" to "Memuat penggunaan",
+            "Usage permission required" to "Izin penggunaan diperlukan",
+            "Publisher loading" to "Memuat penerbit",
+            "Day" to "Hari",
+            "Total" to "Total",
+            "Open app" to "Buka aplikasi",
+            "Manage" to "Kelola",
+            "Archived" to "Diarsipkan",
+            "Live" to "Aktif",
+            "Set day" to "Atur hari",
+            "Finish" to "Selesai",
+            "Reactivate" to "Aktifkan lagi",
+            "Restore" to "Pulihkan",
+            "Delete" to "Hapus",
+            "Graph" to "Grafik",
+            "Text" to "Teks",
+            "Cancel" to "Batal",
+            "Save" to "Simpan",
+            "Date format" to "Format tanggal",
+            "Reminder time" to "Waktu pengingat",
+            "Close" to "Tutup",
+            "Search" to "Cari",
+            "Newest" to "Terbaru",
+            "Oldest" to "Terlama",
+            "No results" to "Tidak ada hasil",
+            "Minutes" to "Menit",
+            "min" to "mnt",
+            "Detail" to "Detail",
+            "Finish test?" to "Selesaikan tes?",
+            "Reactivate?" to "Aktifkan lagi?",
+            "Archive?" to "Arsipkan?",
+            "Restore?" to "Pulihkan?",
+            "Delete app" to "Hapus aplikasi",
+            "New update available" to "Pembaruan tersedia",
+            "App updates" to "Pembaruan aplikasi",
+            "Update" to "Perbarui",
+            "Later" to "Nanti",
+            "Test day" to "Hari tes",
+            "Selected day" to "Hari dipilih",
+            "Version" to "Versi",
+            "Open in Google Play" to "Buka di Google Play",
+            "Appearance" to "Tampilan",
+            "System" to "Sistem",
+            "Light" to "Terang",
+            "Dark" to "Gelap",
+            "Notification permission" to "Izin notifikasi",
+            "Help" to "Bantuan",
+            "App info" to "Info aplikasi",
+            "Purpose" to "Tujuan",
+            "How to use" to "Cara pakai",
+            "Note" to "Catatan",
+            "Support email" to "Email dukungan",
+            "Full series" to "Seri lengkap",
+            "Pending" to "Tertunda",
+            "Choose" to "Pilih",
+            "Choose language" to "Pilih bahasa",
+            "Theme" to "Tema",
+            "Fresh" to "Segar",
+            "Ocean" to "Laut",
+            "Sunset" to "Senja",
+            "Name" to "Nama",
+            "New" to "Baru",
+            "Old" to "Lama"
+        )
+        return when (language) {
+            AppLanguage.DE -> de[value]
+            AppLanguage.JA -> ja[value]
+            AppLanguage.PT -> pt[value]
+            AppLanguage.ID -> id[value]
+            else -> null
+        } ?: value
+    }
+
+    fun all(
+        fr: String,
+        es: String,
+        zh: String,
+        hi: String,
+        ru: String,
+        ar: String,
+        de: String = auto(AppLanguage.DE, en),
+        ja: String = auto(AppLanguage.JA, en),
+        pt: String = auto(AppLanguage.PT, en),
+        id: String = auto(AppLanguage.ID, en)
+    ) = mapOf(
         AppLanguage.FR to fr,
         AppLanguage.ES to es,
         AppLanguage.ZH to zh,
         AppLanguage.HI to hi,
         AppLanguage.RU to ru,
-        AppLanguage.AR to ar
+        AppLanguage.AR to ar,
+        AppLanguage.DE to de,
+        AppLanguage.JA to ja,
+        AppLanguage.PT to pt,
+        AppLanguage.ID to id
     )
     val common = when (en) {
         "Loading" -> all("Chargement", "Cargando", "加载中", "लोड हो रहा है", "Загрузка", "جارٍ التحميل")
@@ -920,7 +1433,7 @@ private fun fallbackText(language: AppLanguage, en: String): String {
         "Day.Month" -> all("Jour.Mois", "Día.Mes", "日.月", "दिन.माह", "День.Мес", "يوم.شهر")
         else -> null
     }
-    return common?.get(language) ?: en
+    return translatedCopy(language, en) ?: common?.get(language) ?: auto(language, en)
 }
 
 private fun languageLabel(language: AppLanguage): String {
@@ -933,6 +1446,10 @@ private fun languageLabel(language: AppLanguage): String {
         AppLanguage.HI -> "हिन्दी"
         AppLanguage.RU -> "Русский"
         AppLanguage.AR -> "العربية"
+        AppLanguage.DE -> "Deutsch"
+        AppLanguage.JA -> "日本語"
+        AppLanguage.PT -> "Português"
+        AppLanguage.ID -> "Indonesia"
     }
 }
 
@@ -946,6 +1463,10 @@ private fun languageFlag(language: AppLanguage): String {
         AppLanguage.HI -> "\uD83C\uDDEE\uD83C\uDDF3"
         AppLanguage.RU -> "\uD83C\uDDF7\uD83C\uDDFA"
         AppLanguage.AR -> "\uD83C\uDDF8\uD83C\uDDE6"
+        AppLanguage.DE -> "\uD83C\uDDE9\uD83C\uDDEA"
+        AppLanguage.JA -> "\uD83C\uDDEF\uD83C\uDDF5"
+        AppLanguage.PT -> "\uD83C\uDDF5\uD83C\uDDF9"
+        AppLanguage.ID -> "\uD83C\uDDEE\uD83C\uDDE9"
     }
 }
 
@@ -962,6 +1483,10 @@ private fun systemLanguage(): AppLanguage {
         "hi" -> AppLanguage.HI
         "ru" -> AppLanguage.RU
         "ar" -> AppLanguage.AR
+        "de" -> AppLanguage.DE
+        "ja" -> AppLanguage.JA
+        "pt" -> AppLanguage.PT
+        "in", "id" -> AppLanguage.ID
         else -> AppLanguage.EN
     }
 }
@@ -977,6 +1502,10 @@ private fun languageModeLabel(mode: LanguageMode): String {
         LanguageMode.HI -> languageDisplay(AppLanguage.HI)
         LanguageMode.RU -> languageDisplay(AppLanguage.RU)
         LanguageMode.AR -> languageDisplay(AppLanguage.AR)
+        LanguageMode.DE -> languageDisplay(AppLanguage.DE)
+        LanguageMode.JA -> languageDisplay(AppLanguage.JA)
+        LanguageMode.PT -> languageDisplay(AppLanguage.PT)
+        LanguageMode.ID -> languageDisplay(AppLanguage.ID)
     }
 }
 
@@ -991,6 +1520,10 @@ private fun languageModeCode(mode: LanguageMode): String {
         LanguageMode.HI -> "HI"
         LanguageMode.RU -> "RU"
         LanguageMode.AR -> "AR"
+        LanguageMode.DE -> "DE"
+        LanguageMode.JA -> "JA"
+        LanguageMode.PT -> "PT"
+        LanguageMode.ID -> "ID"
     }
 }
 
@@ -1014,6 +1547,10 @@ private fun languageModeTitle(mode: LanguageMode, uiLanguage: AppLanguage): Stri
         LanguageMode.HI -> "हिन्दी"
         LanguageMode.RU -> "Русский"
         LanguageMode.AR -> "العربية"
+        LanguageMode.DE -> "Deutsch"
+        LanguageMode.JA -> "日本語"
+        LanguageMode.PT -> "Português"
+        LanguageMode.ID -> "Indonesia"
     }
 }
 
@@ -1037,6 +1574,10 @@ private fun languageModeSubtitle(mode: LanguageMode, uiLanguage: AppLanguage): S
         LanguageMode.HI -> text(uiLanguage, "Uygulama arayüzü हिन्दी olur.", "The app interface switches to Hindi.", "L'interface passe en hindi.", "La interfaz cambia a hindi.", "应用界面将切换为印地语。", "ऐप इंटरफ़ेस हिंदी में होगा।", "Интерфейс приложения будет на хинди.")
         LanguageMode.RU -> text(uiLanguage, "Uygulama arayüzü Русский olur.", "The app interface switches to Russian.", "L'interface passe en russe.", "La interfaz cambia a ruso.", "应用界面将切换为俄语。", "ऐप इंटरफ़ेस रूसी में होगा।", "Интерфейс приложения будет на русском.")
         LanguageMode.AR -> text(uiLanguage, "Uygulama arayüzü العربية olur.", "The app interface switches to Arabic.", "L'interface passe en arabe.", "La interfaz cambia a árabe.", "应用界面将切换为阿拉伯语。", "ऐप इंटरफ़ेस अरबी में होगा।", "Интерфейс приложения будет на арабском.", "ستتحول واجهة التطبيق إلى العربية.")
+        LanguageMode.DE -> text(uiLanguage, "Uygulama arayüzü Deutsch olur.", "The app interface switches to German.", de = "Die App-Oberfläche wechselt zu Deutsch.")
+        LanguageMode.JA -> text(uiLanguage, "Uygulama arayüzü 日本語 olur.", "The app interface switches to Japanese.", ja = "アプリの表示言語が日本語になります。")
+        LanguageMode.PT -> text(uiLanguage, "Uygulama arayüzü Português olur.", "The app interface switches to Portuguese.", pt = "A interface do app muda para português.")
+        LanguageMode.ID -> text(uiLanguage, "Uygulama arayüzü Indonesia olur.", "The app interface switches to Indonesian.", id = "Antarmuka aplikasi beralih ke bahasa Indonesia.")
     }
 }
 
@@ -1059,6 +1600,10 @@ private fun LanguageMode.resolvedLanguage(): AppLanguage {
         LanguageMode.HI -> AppLanguage.HI
         LanguageMode.RU -> AppLanguage.RU
         LanguageMode.AR -> AppLanguage.AR
+        LanguageMode.DE -> AppLanguage.DE
+        LanguageMode.JA -> AppLanguage.JA
+        LanguageMode.PT -> AppLanguage.PT
+        LanguageMode.ID -> AppLanguage.ID
     }
 }
 
@@ -1069,8 +1614,6 @@ class MainActivity : ComponentActivity() {
     ) { granted ->
         if (granted) {
             ReminderScheduler.schedule(this)
-        } else {
-            openNotificationSettings(this)
         }
     }
 
@@ -1088,8 +1631,6 @@ class MainActivity : ComponentActivity() {
         setTheme(if (darkTheme) R.style.Theme_TesterApp_Dark else R.style.Theme_TesterApp_Light)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        requestNotificationPermissionIfNeeded()
 
         setContent {
             val prefs = remember { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
@@ -1119,6 +1660,7 @@ class MainActivity : ComponentActivity() {
                     appTheme = appTheme,
                     themeMode = themeMode,
                     darkTheme = darkTheme,
+                    restoreLastScreenFromPrefs = true,
                     onThemeChange = {
                         appTheme = it
                         prefs.edit().putString(KEY_THEME, it.name).apply()
@@ -1127,7 +1669,8 @@ class MainActivity : ComponentActivity() {
                         themeMode = it
                         prefs.edit().putString(KEY_THEME_MODE, it.name).apply()
                     },
-                    onRequestNotificationPermission = { requestNotificationPermissionIfNeeded(force = true) },
+                    onRequestNotificationPermission = { requestNotificationPermissionIfNeeded(force = false) },
+                    onOpenNotificationSettings = { requestNotificationPermissionIfNeeded(force = true) },
                     onOpenUsageSettings = { openUsageSettings(this) },
                     observeTrackedApps = { onData ->
                         lifecycleScope.launch {
@@ -1203,25 +1746,45 @@ private fun openUsageSettings(activity: Activity) {
     activity.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
 }
 
+private fun hasOverlayPermission(context: Context): Boolean {
+    return Settings.canDrawOverlays(context)
+}
+
+private fun openOverlaySettings(context: Context) {
+    val intent = Intent(
+        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+        android.net.Uri.parse("package:${context.packageName}")
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+}
+
+private fun setLiveOverlayEnabled(context: Context, enabled: Boolean) {
+    val intent = Intent(context, LiveUsageOverlayService::class.java)
+    if (enabled && hasOverlayPermission(context)) {
+        runCatching { context.startService(intent) }
+    } else {
+        runCatching { context.stopService(intent) }
+    }
+}
+
 private fun hasNotificationPermission(context: android.content.Context): Boolean {
     return Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 }
 
 private fun openNotificationSettings(context: android.content.Context) {
-    if (Build.VERSION.SDK_INT >= 26) {
-        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        runCatching { context.startActivity(intent) }
-            .onSuccess { return }
-    }
-    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-        data = android.net.Uri.parse("package:${context.packageName}")
+    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     runCatching { context.startActivity(intent) }
+        .onSuccess { return }
+
+    val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = android.net.Uri.parse("package:${context.packageName}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(fallbackIntent) }
 }
 
 private fun showUpdateAvailableNotificationIfNeeded(
@@ -1236,7 +1799,7 @@ private fun showUpdateAvailableNotificationIfNeeded(
 
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     val channelId = "app_updates"
-    if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(channelId) == null) {
+    if (manager.getNotificationChannel(channelId) == null) {
         manager.createNotificationChannel(
             NotificationChannel(
                 channelId,
@@ -1257,7 +1820,7 @@ private fun showUpdateAvailableNotificationIfNeeded(
         context,
         2001,
         if (intent.resolveActivity(context.packageManager) != null) intent else fallbackIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
     val title = text(
@@ -1298,8 +1861,129 @@ private fun showUpdateAvailableNotificationIfNeeded(
 private fun openTrackedApp(context: android.content.Context, packageName: String) {
     runCatching {
         val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        UsageReader.markAppLaunched(context, packageName)
+        if (context !is Activity) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
         context.startActivity(intent)
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+private fun shareCurrentScreenImage(context: Context, language: AppLanguage) {
+    val activity = context.findActivity() ?: return
+    runCatching {
+        val root = activity.findViewById<View>(android.R.id.content)
+        val bitmap = root.drawToBitmap(Bitmap.Config.ARGB_8888)
+        val shareDir = File(activity.cacheDir, "shared_images").apply { mkdirs() }
+        val file = File(shareDir, "closed_test_tracker_gallery.png")
+        FileOutputStream(file).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        val uri = FileProvider.getUriForFile(
+            activity,
+            "${activity.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "Closed Test Tracker")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        activity.startActivity(
+            Intent.createChooser(
+                intent,
+                text(language, "Ekran görüntüsünü paylaş", "Share screenshot", "Partager la capture", "Compartir captura", "分享截图", "स्क्रीनशॉट साझा करें", "Поделиться скриншотом", "مشاركة لقطة الشاشة")
+            )
+        )
+    }.onFailure {
+        Toast.makeText(
+            context,
+            text(language, "Paylaşım açılamadı", "Could not open share sheet", "Impossible d'ouvrir le partage", "No se pudo abrir compartir", "无法打开分享", "शेयर शीट नहीं खुली", "Не удалось открыть меню отправки", "تعذر فتح نافذة المشاركة"),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+}
+
+private fun captureCurrentScreenImage(context: Context): Boolean {
+    val activity = context.findActivity() ?: return false
+    return runCatching {
+        val root = activity.findViewById<View>(android.R.id.content)
+        val bitmap = root.drawToBitmap(Bitmap.Config.ARGB_8888)
+        val shareDir = File(activity.cacheDir, "shared_images").apply { mkdirs() }
+        val file = File(shareDir, "closed_test_tracker_gallery.png")
+        FileOutputStream(file).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        true
+    }.getOrDefault(false)
+}
+
+private fun shareCachedGalleryImage(context: Context, language: AppLanguage) {
+    val activity = context.findActivity() ?: return
+    runCatching {
+        val file = File(File(activity.cacheDir, "shared_images"), "closed_test_tracker_gallery.png")
+        if (!file.exists()) {
+            captureCurrentScreenImage(context)
+        }
+        if (!file.exists()) error("Screenshot cache was not created")
+        val uri = FileProvider.getUriForFile(
+            activity,
+            "${activity.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "Closed Test Tracker")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        activity.startActivity(
+            Intent.createChooser(
+                intent,
+                text(language, "Ekran görüntüsünü paylaş", "Share screenshot", "Partager la capture", "Compartir captura", "分享截图", "स्क्रीनशॉट साझा करें", "Поделиться скриншотом", "مشاركة لقطة الشاشة")
+            )
+        )
+    }.onFailure {
+        Toast.makeText(
+            context,
+            text(language, "Paylaşım açılamadı", "Could not open share sheet", "Impossible d'ouvrir le partage", "No se pudo abrir compartir", "无法打开分享", "शेयर शीट नहीं खुली", "Не удалось открыть меню отправки", "تعذر فتح نافذة المشاركة"),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+}
+
+private fun shareAppWithFriends(context: Context, language: AppLanguage) {
+    val shareText = text(
+        language,
+        "Closed Test Tracker ile Google Play kapalı testlerini ve günlük kullanım serilerini takip edebilirsin:\nhttps://play.google.com/store/apps/details?id=${context.packageName}",
+        "Track Google Play closed tests and daily usage streaks with Closed Test Tracker:\nhttps://play.google.com/store/apps/details?id=${context.packageName}",
+        "Suivez les tests fermés Google Play et les séries d'utilisation quotidienne avec Closed Test Tracker :\nhttps://play.google.com/store/apps/details?id=${context.packageName}",
+        "Sigue pruebas cerradas de Google Play y rachas de uso diario con Closed Test Tracker:\nhttps://play.google.com/store/apps/details?id=${context.packageName}",
+        "使用 Closed Test Tracker 跟踪 Google Play 封闭测试和每日使用连续记录：\nhttps://play.google.com/store/apps/details?id=${context.packageName}",
+        "Closed Test Tracker से Google Play closed tests और daily usage streaks ट्रैक करें:\nhttps://play.google.com/store/apps/details?id=${context.packageName}",
+        "Отслеживайте закрытые тесты Google Play и ежедневные серии с Closed Test Tracker:\nhttps://play.google.com/store/apps/details?id=${context.packageName}",
+        "تابع اختبارات Google Play المغلقة وسلاسل الاستخدام اليومية عبر Closed Test Tracker:\nhttps://play.google.com/store/apps/details?id=${context.packageName}"
+    )
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, "Closed Test Tracker")
+        putExtra(Intent.EXTRA_TEXT, shareText)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching {
+        context.startActivity(
+            Intent.createChooser(
+                intent,
+                text(language, "Uygulamayı paylaş", "Share app", "Partager l'application", "Compartir app", "分享应用", "ऐप साझा करें", "Поделиться приложением", "مشاركة التطبيق")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 }
 
@@ -1328,6 +2012,10 @@ private fun openPolicyPage(context: android.content.Context) {
     openExternalPage(context, POLICY_URL)
 }
 
+private fun openStudioPage(context: android.content.Context) {
+    openExternalPage(context, MD_STUDIO_URL)
+}
+
 private fun openExternalPage(context: android.content.Context, url: String) {
     val intent = Intent(Intent.ACTION_VIEW).apply {
         data = android.net.Uri.parse(url)
@@ -1336,6 +2024,59 @@ private fun openExternalPage(context: android.content.Context, url: String) {
     }
     runCatching { context.startActivity(Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         .recoverCatching { context.startActivity(intent) }
+}
+
+private fun isDebuggableApp(context: Context): Boolean {
+    return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+}
+
+private fun adLoadMessage(language: AppLanguage, error: LoadAdError): String {
+    return when (error.code) {
+        AdRequest.ERROR_CODE_NO_FILL -> text(
+            language,
+            "Şu anda uygun reklam yok. Biraz sonra tekrar dene.",
+            "No suitable ad is available right now. Try again later.",
+            "Aucune publicité adaptée pour le moment. Réessayez plus tard.",
+            "No hay un anuncio adecuado ahora. Inténtalo más tarde.",
+            "目前没有合适的广告，请稍后再试。",
+            "अभी उपयुक्त विज्ञापन उपलब्ध नहीं है। बाद में फिर कोशिश करें।",
+            "Сейчас нет подходящей рекламы. Попробуйте позже.",
+            "لا يوجد إعلان مناسب الآن. حاول لاحقاً."
+        )
+        AdRequest.ERROR_CODE_NETWORK_ERROR -> text(
+            language,
+            "Bağlantı sorunu nedeniyle reklam alınamadı.",
+            "Ad could not load because of a network issue.",
+            "La publicité n'a pas pu être chargée à cause du réseau.",
+            "El anuncio no pudo cargarse por un problema de red.",
+            "由于网络问题，广告无法加载。",
+            "नेटवर्क समस्या के कारण विज्ञापन लोड नहीं हुआ।",
+            "Реклама не загрузилась из-за проблемы сети.",
+            "تعذر تحميل الإعلان بسبب مشكلة في الشبكة."
+        )
+        AdRequest.ERROR_CODE_INVALID_REQUEST -> text(
+            language,
+            "Reklam isteği geçersiz görünüyor. Yayın ayarları kontrol edilmeli.",
+            "The ad request looks invalid. Publishing settings should be checked.",
+            "La demande de publicité semble invalide. Vérifiez les réglages.",
+            "La solicitud de anuncio parece inválida. Revisa la configuración.",
+            "广告请求无效，请检查发布设置。",
+            "विज्ञापन अनुरोध अमान्य है। पब्लिशिंग सेटिंग जांचें।",
+            "Запрос рекламы недействителен. Проверьте настройки.",
+            "طلب الإعلان غير صالح. تحقق من إعدادات النشر."
+        )
+        else -> text(
+            language,
+            "Reklam yüklenemedi. Biraz sonra tekrar dene.",
+            "Ad could not load. Try again later.",
+            "La publicité n'a pas pu être chargée. Réessayez plus tard.",
+            "El anuncio no pudo cargarse. Inténtalo más tarde.",
+            "广告无法加载，请稍后再试。",
+            "विज्ञापन लोड नहीं हुआ। बाद में फिर कोशिश करें।",
+            "Реклама не загрузилась. Попробуйте позже.",
+            "تعذر تحميل الإعلان. حاول لاحقاً."
+        )
+    }
 }
 
 private fun openPlayStorePage(context: android.content.Context, packageName: String) {
@@ -1354,7 +2095,7 @@ private fun openPlayStorePage(context: android.content.Context, packageName: Str
 
 private fun installedApps(pm: PackageManager): List<InstalledApp> {
     val launchIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    val launchablePackages = if (Build.VERSION.SDK_INT >= 33) {
+    val launchableActivities = if (Build.VERSION.SDK_INT >= 33) {
         pm.queryIntentActivities(
             launchIntent,
             PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
@@ -1362,18 +2103,14 @@ private fun installedApps(pm: PackageManager): List<InstalledApp> {
     } else {
         @Suppress("DEPRECATION")
         pm.queryIntentActivities(launchIntent, PackageManager.MATCH_ALL)
-    }.mapNotNull { it.activityInfo?.packageName }.toSet()
-
-    val apps: List<ApplicationInfo> = if (Build.VERSION.SDK_INT >= 33) {
-        pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-    } else {
-        @Suppress("DEPRECATION")
-        pm.getInstalledApplications(0)
     }
 
-    return apps.asSequence()
-        .filter { it.packageName in launchablePackages }
-        .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || (it.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0 }
+    return launchableActivities.asSequence()
+        .mapNotNull { it.activityInfo?.applicationInfo }
+        .filter { info ->
+            (info.flags and ApplicationInfo.FLAG_SYSTEM) == 0 ||
+                (info.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        }
         .mapNotNull { info ->
             runCatching {
                 val pkg = info.packageName
@@ -1395,6 +2132,10 @@ private fun installedApps(pm: PackageManager): List<InstalledApp> {
         }
         .distinctBy { it.packageName }
         .toList()
+}
+
+private fun appIconBitmap(pm: PackageManager, packageName: String): Bitmap? {
+    return runCatching { pm.getApplicationIcon(packageName).toBitmap() }.getOrNull()
 }
 
 private fun sortInstalledApps(apps: List<InstalledApp>, sortMode: SortMode): List<InstalledApp> {
@@ -1462,12 +2203,7 @@ private fun parsePlayPublisher(html: String): String? {
 
 private fun decodeHtmlText(value: String): String {
     val withoutTags = value.replace(Regex("<[^>]+>"), "").trim()
-    return if (Build.VERSION.SDK_INT >= 24) {
-        Html.fromHtml(withoutTags, Html.FROM_HTML_MODE_LEGACY).toString()
-    } else {
-        @Suppress("DEPRECATION")
-        Html.fromHtml(withoutTags).toString()
-    }.trim()
+    return Html.fromHtml(withoutTags, Html.FROM_HTML_MODE_LEGACY).toString().trim()
 }
 
 private fun Drawable.toBitmap(): Bitmap {
@@ -1486,9 +2222,11 @@ fun MainScreen(
     appTheme: AppTheme,
     themeMode: AppThemeMode,
     darkTheme: Boolean,
+    restoreLastScreenFromPrefs: Boolean,
     onThemeChange: (AppTheme) -> Unit,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onRequestNotificationPermission: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
     onOpenUsageSettings: () -> Unit,
     observeTrackedApps: ((List<TrackedApp>) -> Unit) -> Unit,
     onTrackApp: (String, String, Int) -> Unit,
@@ -1513,10 +2251,47 @@ fun MainScreen(
     }
     val language = languageMode.resolvedLanguage()
     var tracked by remember { mutableStateOf(emptyList<TrackedApp>()) }
+    var trackedLoaded by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(false) }
-    var screen by rememberSaveable { mutableStateOf(AppScreen.HOME) }
+    var showProOffer by remember { mutableStateOf(false) }
+    var showProHub by remember { mutableStateOf(false) }
+    var showTestShare by remember { mutableStateOf(false) }
+    val proManager = remember { ProManager(context) }
+    val proBillingState by proManager.state.collectAsState()
+    val proStorage = remember { ProStorage(context) }
+    val isPro = proBillingState.isPro || BuildConfig.PRO_PREVIEW
+    val restoredPackageName = remember(restoreLastScreenFromPrefs) {
+        if (restoreLastScreenFromPrefs) {
+            prefs.getString(KEY_LAST_SELECTED_PACKAGE, null)?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+    }
+    val restoredScreen = remember(restoreLastScreenFromPrefs, restoredPackageName) {
+        val savedAt = prefs.getLong(KEY_LAST_SCREEN_SAVED_AT, 0L)
+        val canRestore = restoreLastScreenFromPrefs &&
+            savedAt > 0L &&
+            System.currentTimeMillis() - savedAt <= LAST_SCREEN_RESTORE_TIMEOUT_MILLIS
+        val value = runCatching {
+            AppScreen.valueOf(prefs.getString(KEY_LAST_SCREEN, AppScreen.HOME.name) ?: AppScreen.HOME.name)
+        }.getOrDefault(AppScreen.HOME)
+        if (!canRestore || value == AppScreen.HOWTO || (value == AppScreen.DETAIL && restoredPackageName.isNullOrBlank())) {
+            AppScreen.HOME
+        } else {
+            value
+        }
+    }
+    val canRestoreLastUiState = remember(restoreLastScreenFromPrefs) {
+        val savedAt = prefs.getLong(KEY_LAST_SCREEN_SAVED_AT, 0L)
+        restoreLastScreenFromPrefs &&
+            savedAt > 0L &&
+            System.currentTimeMillis() - savedAt <= LAST_SCREEN_RESTORE_TIMEOUT_MILLIS
+    }
+    var screen by rememberSaveable { mutableStateOf(restoredScreen) }
     var homeFilter by rememberSaveable { mutableStateOf(HomeFilter.ACTIVE) }
+    var homeSearchQuery by rememberSaveable { mutableStateOf("") }
     var reminderHour by remember { mutableIntStateOf(prefs.getInt(KEY_REMINDER_HOUR, 20)) }
+    var liveOverlayEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_LIVE_USAGE_OVERLAY, false)) }
     var dateFormat by remember {
         mutableStateOf(
             runCatching {
@@ -1527,19 +2302,37 @@ fun MainScreen(
     var daySetupTarget by remember { mutableStateOf<DaySetupTarget?>(null) }
     var deleteTarget by remember { mutableStateOf<TrackedApp?>(null) }
     var confirmTarget by remember { mutableStateOf<Pair<ConfirmAction, TrackedApp>?>(null) }
-    var selectedPackageName by rememberSaveable { mutableStateOf<String?>(null) }
-    var showOverviewSheet by remember { mutableStateOf(false) }
+    var selectedPackageName by rememberSaveable { mutableStateOf(restoredPackageName) }
+    var gallerySharePromptVisible by rememberSaveable { mutableStateOf(false) }
     var usageAccess by remember { mutableStateOf(UsageReader.hasUsageAccess(context)) }
     var notificationAllowed by remember { mutableStateOf(hasNotificationPermission(context)) }
+    var overlayAllowed by remember { mutableStateOf(hasOverlayPermission(context)) }
     var refreshTick by remember { mutableIntStateOf(0) }
+    var lastUsageRefreshAt by remember { mutableLongStateOf(0L) }
     var playUpdateState by remember { mutableStateOf(PlayUpdateState()) }
     var updatePromptVisible by remember { mutableStateOf(false) }
-    val homeListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    var supportRewardedAd by remember { mutableStateOf<RewardedAd?>(null) }
+    var supportAdLoading by remember { mutableStateOf(false) }
+    var supportAdStatus by remember { mutableStateOf<String?>(null) }
+    var supportAdRetryAfterMillis by remember { mutableLongStateOf(0L) }
+    val homeListState = rememberSaveable(saver = LazyListState.Saver) {
+        LazyListState(
+            firstVisibleItemIndex = if (canRestoreLastUiState) prefs.getInt(KEY_HOME_LIST_INDEX, 0) else 0,
+            firstVisibleItemScrollOffset = if (canRestoreLastUiState) prefs.getInt(KEY_HOME_LIST_OFFSET, 0) else 0
+        )
+    }
     var apps by remember { mutableStateOf(emptyList<InstalledApp>()) }
     val playPublishers = remember { mutableStateMapOf<String, String>() }
     val playPublisherRequested = remember { mutableStateMapOf<String, Boolean>() }
     val usageSummaryCache = remember { mutableStateMapOf<String, UsageSummary>() }
     val appUpdateManager = remember { AppUpdateManagerFactory.create(context) }
+    fun requestUsageRefresh(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (force || now - lastUsageRefreshAt >= USAGE_REFRESH_MIN_INTERVAL_MILLIS) {
+            lastUsageRefreshAt = now
+            refreshTick++
+        }
+    }
     val appVersionName = remember {
         runCatching {
             val info = if (Build.VERSION.SDK_INT >= 33) {
@@ -1554,11 +2347,30 @@ fun MainScreen(
             info.versionName ?: "-"
         }.getOrDefault("-")
     }
+    val uiScope = rememberCoroutineScope()
+    val appLogoBitmap = remember {
+        runCatching {
+            drawableToBitmap(context.packageManager.getApplicationIcon(context.packageName))
+        }.getOrNull()
+    }
+    fun persistLastUiState() {
+        if (screen == AppScreen.HOWTO) return
+        prefs.edit()
+            .putString(KEY_LAST_SCREEN, screen.name)
+            .putString(KEY_LAST_SELECTED_PACKAGE, selectedPackageName.orEmpty())
+            .putInt(KEY_HOME_LIST_INDEX, homeListState.firstVisibleItemIndex)
+            .putInt(KEY_HOME_LIST_OFFSET, homeListState.firstVisibleItemScrollOffset)
+            .putLong(KEY_LAST_SCREEN_SAVED_AT, System.currentTimeMillis())
+            .apply()
+    }
+    val appDisplayName = remember { context.getString(R.string.app_name) }
     val selectedItem = tracked.firstOrNull { it.packageName == selectedPackageName }
     val topTitle = when (screen) {
         AppScreen.SETTINGS -> text(language, "Ayarlar", "Settings", "Paramètres", "Ajustes", "设置", "सेटिंग्स", "Настройки")
         AppScreen.DETAIL -> selectedItem?.appLabel ?: text(language, "Detay", "Detail", "Détail", "Detalle", "详情", "विवरण", "Детали")
-        AppScreen.HOME -> "Closed Test Tracker"
+        AppScreen.HOWTO -> text(language, "Nasıl kullanılır", "How to use", "Utilisation", "Cómo usar", "如何使用", "कैसे उपयोग करें", "Как использовать", "طريقة الاستخدام")
+        AppScreen.GALLERY -> text(language, "Genel özet", "General summary", "Résumé général", "Resumen general", "总览摘要", "सामान्य सारांश", "Общая сводка", "الملخص العام")
+        AppScreen.HOME -> appDisplayName
     }
 
     suspend fun ensurePlayPublisher(packageName: String) {
@@ -1582,6 +2394,114 @@ fun MainScreen(
     suspend fun refreshInstalledApps() {
         apps = withContext(Dispatchers.Default) {
             installedApps(context.packageManager)
+        }
+    }
+
+    fun rewardedAdUnitId(): String {
+        return if (isDebuggableApp(context)) REWARDED_TEST_AD_UNIT_ID else REWARDED_PROD_AD_UNIT_ID
+    }
+
+    fun loadSupportRewardedAd(force: Boolean = false) {
+        if ((supportRewardedAd != null && !force) || supportAdLoading) return
+        val now = System.currentTimeMillis()
+        if (!force && now < supportAdRetryAfterMillis) return
+        supportAdLoading = true
+        supportAdStatus = text(
+            language,
+            "Reklam hazırlanıyor...",
+            "Preparing ad...",
+            "Préparation de la publicité...",
+            "Preparando anuncio...",
+            "正在准备广告...",
+            "विज्ञापन तैयार हो रहा है...",
+            "Реклама подготавливается...",
+            "يتم تجهيز الإعلان..."
+        )
+        RewardedAd.load(
+            context,
+            rewardedAdUnitId(),
+            AdRequest.Builder().build(),
+            object : RewardedAdLoadCallback() {
+                override fun onAdLoaded(ad: RewardedAd) {
+                    supportAdLoading = false
+                    supportRewardedAd = ad
+                    supportAdRetryAfterMillis = 0L
+                    supportAdStatus = text(
+                        language,
+                        "Reklam hazır.",
+                        "Ad is ready.",
+                        "La publicité est prête.",
+                        "El anuncio está listo.",
+                        "广告已准备好。",
+                        "विज्ञापन तैयार है।",
+                        "Реклама готова.",
+                        "الإعلان جاهز."
+                    )
+                }
+
+                override fun onAdFailedToLoad(error: LoadAdError) {
+                    supportAdLoading = false
+                    supportRewardedAd = null
+                    supportAdRetryAfterMillis = System.currentTimeMillis() + if (error.code == AdRequest.ERROR_CODE_NO_FILL) 60_000L else 20_000L
+                    supportAdStatus = adLoadMessage(language, error)
+                    Log.w("ClosedTestAds", "Rewarded failed: code=${error.code}, domain=${error.domain}, message=${error.message}")
+                }
+            }
+        )
+    }
+
+    fun showSupportRewardedAd() {
+        val activity = context.findActivity()
+        val ad = supportRewardedAd
+        if (activity == null) {
+            Toast.makeText(context, text(language, "Bu işlem için ekran aktif olmalı.", "Screen must be active for this action."), Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (ad == null) {
+            loadSupportRewardedAd(force = true)
+            Toast.makeText(
+                context,
+                supportAdStatus ?: text(
+                    language,
+                    "Reklam hazırlanıyor, birkaç saniye sonra tekrar dene.",
+                    "Ad is loading, try again in a few seconds.",
+                    "La publicité se charge, réessayez dans quelques secondes.",
+                    "El anuncio se está cargando, inténtalo de nuevo en unos segundos.",
+                    "广告正在加载，请几秒后重试。",
+                    "विज्ञापन लोड हो रहा है, कुछ सेकंड बाद फिर कोशिश करें।",
+                    "Реклама загружается, попробуйте снова через несколько секунд.",
+                    "يتم تحميل الإعلان، حاول مرة أخرى بعد بضع ثوانٍ."
+                ),
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        ad.fullScreenContentCallback = object : FullScreenContentCallback() {
+            override fun onAdDismissedFullScreenContent() {
+                supportRewardedAd = null
+                loadSupportRewardedAd()
+            }
+            override fun onAdFailedToShowFullScreenContent(adError: com.google.android.gms.ads.AdError) {
+                supportRewardedAd = null
+                loadSupportRewardedAd(force = true)
+            }
+        }
+        ad.show(activity) {
+            Toast.makeText(
+                context,
+                text(
+                    language,
+                    "Destek için teşekkürler!",
+                    "Thanks for your support!",
+                    "Merci pour votre soutien !",
+                    "¡Gracias por tu apoyo!",
+                    "感谢支持！",
+                    "समर्थन के लिए धन्यवाद!",
+                    "Спасибо за поддержку!",
+                    "شكراً لدعمك!"
+                ),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -1612,32 +2532,97 @@ fun MainScreen(
             }
     }
 
-    LaunchedEffect(Unit) { observeTrackedApps { tracked = it } }
+    LaunchedEffect(Unit) {
+        observeTrackedApps {
+            tracked = it
+            trackedLoaded = true
+        }
+    }
+    LaunchedEffect(isPro) {
+        if (!isPro) MobileAds.initialize(context) {}
+    }
+    LaunchedEffect(Unit) {
+        proManager.connect()
+        if (!prefs.getBoolean(KEY_PRO_OFFER_SHOWN, false) && !proBillingState.isPro) {
+            showProOffer = true
+            prefs.edit().putBoolean(KEY_PRO_OFFER_SHOWN, true).apply()
+        }
+    }
+    DisposableEffect(proManager) {
+        onDispose { proManager.close() }
+    }
     LaunchedEffect(Unit) { refreshInstalledApps() }
     LaunchedEffect(Unit) { refreshPlayUpdateState() }
+    LaunchedEffect(isPro) {
+        if (!isPro) loadSupportRewardedAd()
+    }
+    LaunchedEffect(Unit) {
+        delay(700)
+        onRequestNotificationPermission()
+    }
+    LaunchedEffect(Unit) {
+        if (!prefs.getBoolean(KEY_ONBOARDING_SHOWN, false)) {
+            screen = AppScreen.HOWTO
+            prefs.edit().putBoolean(KEY_ONBOARDING_SHOWN, true).apply()
+        }
+    }
+    LaunchedEffect(screen, selectedPackageName) {
+        persistLastUiState()
+    }
+    LaunchedEffect(homeListState) {
+        snapshotFlow {
+            homeListState.firstVisibleItemIndex to homeListState.firstVisibleItemScrollOffset
+        }
+            .distinctUntilChanged()
+            .collect { (index, offset) ->
+                prefs.edit()
+                    .putInt(KEY_HOME_LIST_INDEX, index)
+                    .putInt(KEY_HOME_LIST_OFFSET, offset)
+                    .putLong(KEY_LAST_SCREEN_SAVED_AT, System.currentTimeMillis())
+                    .apply()
+            }
+    }
+    LaunchedEffect(screen, tracked) {
+        if (screen == AppScreen.DETAIL && selectedPackageName != null && tracked.isNotEmpty() && tracked.none { it.packageName == selectedPackageName }) {
+            selectedPackageName = null
+            screen = AppScreen.HOME
+        }
+    }
     LaunchedEffect(refreshTick) {
         usageAccess = UsageReader.hasUsageAccess(context)
         notificationAllowed = hasNotificationPermission(context)
+        overlayAllowed = hasOverlayPermission(context)
+        setLiveOverlayEnabled(context, liveOverlayEnabled && overlayAllowed)
         refreshPlayUpdateState()
+    }
+    LaunchedEffect(liveOverlayEnabled, overlayAllowed) {
+        setLiveOverlayEnabled(context, liveOverlayEnabled && overlayAllowed)
     }
     LaunchedEffect(usageAccess) {
         while (true) {
-            delay(20_000)
-            refreshTick++
+            delay(USAGE_IDLE_REFRESH_INTERVAL_MILLIS)
+            requestUsageRefresh(force = false)
         }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                refreshTick++
-                lifecycleOwner.lifecycleScope.launch {
-                    refreshInstalledApps()
-                    delay(700)
-                    refreshTick++
-                    delay(1_800)
-                    refreshTick++
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    val finishedTrackedSession = UsageReader.finishPendingLaunchedSession(context)
+                    requestUsageRefresh(force = finishedTrackedSession)
+                    lifecycleOwner.lifecycleScope.launch {
+                        refreshInstalledApps()
+                        if (finishedTrackedSession) {
+                            delay(1_200)
+                            requestUsageRefresh(force = true)
+                        }
+                    }
                 }
+                Lifecycle.Event.ON_STOP -> {
+                    persistLastUiState()
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1674,6 +2659,28 @@ fun MainScreen(
         screen = AppScreen.HOME
         selectedPackageName = null
     }
+    DisposableEffect(screen) {
+        val activity = context.findActivity()
+        if (Build.VERSION.SDK_INT >= 34 && activity != null && screen == AppScreen.GALLERY) {
+            val callback = object : Activity.ScreenCaptureCallback {
+                override fun onScreenCaptured() {
+                    gallerySharePromptVisible = true
+                }
+            }
+            activity.registerScreenCaptureCallback(activity.mainExecutor, callback)
+            onDispose {
+                runCatching { activity.unregisterScreenCaptureCallback(callback) }
+            }
+        } else {
+            onDispose { }
+        }
+    }
+    LaunchedEffect(screen, tracked, apps) {
+        if (screen == AppScreen.GALLERY) {
+            delay(350)
+            captureCurrentScreenImage(context)
+        }
+    }
     LaunchedEffect(showPicker) {
         while (showPicker) {
             refreshInstalledApps()
@@ -1684,11 +2691,21 @@ fun MainScreen(
     val activeTracked = tracked.filter { !it.isArchived && it.completedAtMillis == null }
     val completedTracked = tracked.filter { !it.isArchived && it.completedAtMillis != null }
     val archivedTracked = tracked.filter { it.isArchived }
-    val filteredTracked = when (homeFilter) {
-        HomeFilter.ACTIVE -> activeTracked
-        HomeFilter.COMPLETED -> completedTracked
-        HomeFilter.ARCHIVED -> archivedTracked
-        HomeFilter.ALL -> tracked
+    val filteredTracked = remember(tracked, homeFilter, homeSearchQuery) {
+        val base = when (homeFilter) {
+            HomeFilter.ACTIVE -> activeTracked
+            HomeFilter.COMPLETED -> completedTracked
+            HomeFilter.ARCHIVED -> archivedTracked
+            HomeFilter.ALL -> tracked
+        }
+        val q = homeSearchQuery.trim().lowercase()
+        if (q.isBlank()) {
+            base
+        } else {
+            base.filter {
+                it.appLabel.lowercase().contains(q) || it.packageName.lowercase().contains(q)
+            }
+        }
     }
     val visibleTrackedApps = remember(tracked) {
         tracked.filterNot { it.isArchived }
@@ -1696,8 +2713,13 @@ fun MainScreen(
     val visibleUsagePackages = remember(tracked) {
         visibleTrackedApps.map { it.packageName }
     }
-    var todayUsageCache by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
-    var totalUsageCache by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    val visibleUsagePackageKey = remember(visibleUsagePackages) { visibleUsagePackages.joinToString("|") }
+    var todayUsageCache by remember(visibleUsagePackageKey) {
+        mutableStateOf(readUsageCache(prefs, visibleUsagePackages, KEY_USAGE_TODAY_CACHE_PREFIX))
+    }
+    var totalUsageCache by remember(visibleUsagePackageKey) {
+        mutableStateOf(readUsageCache(prefs, visibleUsagePackages, KEY_USAGE_TOTAL_CACHE_PREFIX))
+    }
     val todayUsageState by produceState(
         initialValue = TodayUsageState(
             minutesByPackage = todayUsageCache,
@@ -1717,6 +2739,7 @@ fun MainScreen(
                 UsageReader.todayUsageMinutesMap(context, visibleUsagePackages)
             }
             todayUsageCache = fresh
+            writeUsageCache(prefs, fresh, KEY_USAGE_TODAY_CACHE_PREFIX)
             TodayUsageState(
                 minutesByPackage = fresh,
                 isLoading = false
@@ -1725,6 +2748,15 @@ fun MainScreen(
     }
     val todayUsageMap = todayUsageState.minutesByPackage
     val todayUsageLoading = todayUsageState.isLoading
+    var missingHighlightReady by remember { mutableStateOf(false) }
+    LaunchedEffect(usageAccess, visibleUsagePackages, todayUsageLoading) {
+        if (!usageAccess || visibleUsagePackages.isEmpty() || todayUsageLoading) {
+            missingHighlightReady = false
+        } else {
+            delay(2_500)
+            missingHighlightReady = true
+        }
+    }
     val totalUsageState by produceState(
         initialValue = TodayUsageState(
             minutesByPackage = totalUsageCache,
@@ -1754,7 +2786,7 @@ fun MainScreen(
                             startMillis = seriesStart,
                             endMillis = now
                         )
-                        val eventDaily = UsageReader.usageMinutesByDayMapFromEvents(
+                        val eventDaily = UsageReader.usageMinutesByDayMapFromEventsForDisplay(
                             context = context,
                             packageName = item.packageName,
                             startMillis = seriesStart,
@@ -1774,6 +2806,7 @@ fun MainScreen(
                 }
             }
             totalUsageCache = fresh
+            writeUsageCache(prefs, fresh, KEY_USAGE_TOTAL_CACHE_PREFIX)
             TodayUsageState(
                 minutesByPackage = fresh,
                 isLoading = false
@@ -1782,11 +2815,6 @@ fun MainScreen(
     }
     val totalUsageMap = totalUsageState.minutesByPackage
     val totalUsageLoading = totalUsageState.isLoading
-    val missingTodayApps = if (usageAccess && !todayUsageLoading) {
-        activeTracked.filter { (todayUsageMap[it.packageName] ?: 0L) == 0L }
-    } else {
-        emptyList()
-    }
     val usedTodayCount = if (usageAccess && !todayUsageLoading) activeTracked.count { (todayUsageMap[it.packageName] ?: 0L) > 0L } else 0
     val missingTodayCount = if (usageAccess && !todayUsageLoading) {
         activeTracked.count { (todayUsageMap[it.packageName] ?: 0L) == 0L }
@@ -1809,52 +2837,78 @@ fun MainScreen(
             topBar = {
                 TopAppBar(
                 title = {
-                    Surface(
-                        color = glassColor(strong = true),
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        shape = RoundedCornerShape(24.dp),
-                        border = glassBorder()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        when (screen) {
+                            AppScreen.HOME -> {
+                                if (appLogoBitmap != null) {
+                                    Image(
+                                        bitmap = appLogoBitmap.asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(29.dp)
+                                    )
+                                }
+                            }
+                            AppScreen.HOWTO -> {
+                                Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null, modifier = Modifier.size(22.dp))
+                            }
+                            AppScreen.SETTINGS -> {
+                                Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(22.dp))
+                            }
+                            AppScreen.GALLERY -> {
+                                GridDotsIcon(modifier = Modifier.size(22.dp))
+                            }
+                            AppScreen.DETAIL -> Unit
+                        }
                         Text(
                             topTitle,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f, fill = false),
                             fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
+                            fontSize = 20.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                    }
-                },
-                navigationIcon = {
-                    if (screen == AppScreen.DETAIL) {
-                        IconButton(onClick = {
-                            screen = AppScreen.HOME
-                            selectedPackageName = null
-                        }) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = text(language, "Geri", "Back", "Retour", "Atrás", "返回", "वापस", "Назад", "رجوع"))
+                        if (screen == AppScreen.HOME && isPro) {
+                            Surface(
+                                modifier = Modifier.clickable { showProHub = true },
+                                color = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Star, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Text("PRO", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
                         }
                     }
                 },
+                navigationIcon = {
+                    // Intentionally empty: back navigation uses system back gesture/button.
+                },
                 actions = {
                     if (screen == AppScreen.HOME) {
-                        Surface(
-                            color = glassColor(strong = true),
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                            shape = RoundedCornerShape(24.dp),
-                            border = glassBorder(),
-                            modifier = Modifier.padding(end = 8.dp),
-                            shadowElevation = 6.dp
+                        Row(
+                            modifier = Modifier.padding(end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                IconButton(onClick = { showPicker = true }) {
-                                    Icon(Icons.Rounded.Add, contentDescription = text(language, "Uygulama ekle", "Add app", "Ajouter une app", "Añadir app", "添加应用", "ऐप जोड़ें", "Добавить приложение", "إضافة تطبيق"))
-                                }
-                                IconButton(onClick = { screen = AppScreen.SETTINGS }) {
-                                    Icon(Icons.Rounded.Settings, contentDescription = text(language, "Ayarlar", "Settings", "Paramètres", "Ajustes", "设置", "सेटिंग्स", "Настройки"))
-                                }
+                            IconButton(onClick = { showPicker = true }) {
+                                Icon(Icons.Rounded.Add, contentDescription = text(language, "Uygulama ekle", "Add app", "Ajouter une app", "Añadir app", "添加应用", "ऐप जोड़ें", "Добавить приложение", "إضافة تطبيق"))
+                            }
+                            IconButton(onClick = { showTestShare = true }) {
+                                Icon(Icons.Rounded.Share, contentDescription = text(language, "Yeni test paylaş", "Share new test"))
+                            }
+                            IconButton(onClick = { screen = AppScreen.HOWTO }) {
+                                Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = text(language, "Nasıl kullanılır", "How to use", "Utilisation", "Cómo usar", "如何使用", "कैसे उपयोग करें", "Как использовать", "طريقة الاستخدام"))
+                            }
+                            IconButton(onClick = { screen = AppScreen.SETTINGS }) {
+                                Icon(Icons.Rounded.Settings, contentDescription = text(language, "Ayarlar", "Settings", "Paramètres", "Ajustes", "设置", "सेटिंग्स", "Настройки"))
                             }
                         }
                     }
@@ -1883,6 +2937,10 @@ fun MainScreen(
                         reminderHour = reminderHour,
                         dateFormat = dateFormat,
                         notificationAllowed = notificationAllowed,
+                        overlayAllowed = overlayAllowed,
+                        liveOverlayEnabled = liveOverlayEnabled,
+                        showLiveOverlayOption = isDebuggableApp(context),
+                        isPro = isPro,
                         languageMode = languageMode,
                         onLanguageChange = {
                             languageMode = it
@@ -1902,12 +2960,28 @@ fun MainScreen(
                             dateFormat = format
                             prefs.edit().putString(KEY_DATE_FORMAT, format.name).apply()
                         },
+                        onLiveOverlayChange = { enabled ->
+                            liveOverlayEnabled = enabled
+                            prefs.edit().putBoolean(KEY_LIVE_USAGE_OVERLAY, enabled).apply()
+                            if (enabled && !hasOverlayPermission(context)) {
+                                openOverlaySettings(context)
+                            } else {
+                                setLiveOverlayEnabled(context, enabled)
+                            }
+                        },
                         appVersionName = appVersionName,
                         playUpdateState = playUpdateState,
-                        onRequestNotificationPermission = onRequestNotificationPermission,
+                        onRequestNotificationPermission = onOpenNotificationSettings,
                         onSendMail = { sendSupportMail(context, language) },
                         onDonate = { openDonationPage(context) },
+                        supportAdStatus = supportAdStatus,
+                        supportAdLoading = supportAdLoading,
+                        supportAdReady = supportRewardedAd != null,
+                        onWatchSupportAd = { showSupportRewardedAd() },
+                        onShareApp = { shareAppWithFriends(context, language) },
                         onOpenPolicyPage = { openPolicyPage(context) },
+                        onOpenStudioPage = { openStudioPage(context) },
+                        onOpenPro = { showProHub = true },
                         onOpenUpdate = { openPlayStorePage(context, context.packageName) }
                     )
                 }
@@ -1948,7 +3022,10 @@ fun MainScreen(
                             totalMinutes = usageSummary.totalMinutes,
                             hasPartialDailyHistory = usageSummary.hasPartialDailyHistory,
                             isUsageLoading = usageSummary.isLoading,
-                            onOpenApp = { openTrackedApp(context, item.packageName) },
+                            onOpenApp = {
+                                persistLastUiState()
+                                openTrackedApp(context, item.packageName)
+                            },
                             onOpenPlayStore = { openPlayStorePage(context, item.packageName) },
                             onEditDay = {
                                 daySetupTarget = DaySetupTarget(
@@ -1966,6 +3043,52 @@ fun MainScreen(
                     }
                 }
 
+                AppScreen.HOWTO -> {
+                    HowToScreen(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(p)
+                            .padding(10.dp),
+                        language = language,
+                        onContinue = { screen = AppScreen.HOME }
+                    )
+                }
+
+                AppScreen.GALLERY -> {
+                    Box(Modifier.fillMaxSize()) {
+                        AppGalleryScreen(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(p)
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            language = language,
+                            screenshotMode = false,
+                            appDisplayName = appDisplayName,
+                            appLogoBitmap = appLogoBitmap,
+                            tracked = tracked,
+                            installedAppsByPackage = apps.associateBy { it.packageName },
+                            onSelect = { packageName ->
+                                selectedPackageName = packageName
+                                screen = AppScreen.DETAIL
+                            }
+                        )
+                        if (gallerySharePromptVisible) {
+                            ScreenshotSharePrompt(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(p)
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                language = language,
+                                onShare = {
+                                    gallerySharePromptVisible = false
+                                    shareCachedGalleryImage(context, language)
+                                },
+                                onDismiss = { gallerySharePromptVisible = false }
+                            )
+                        }
+                    }
+                }
+
                 AppScreen.HOME -> {
                     Box(
                         modifier = Modifier
@@ -1979,27 +3102,45 @@ fun MainScreen(
                             contentPadding = PaddingValues(top = 6.dp, bottom = 130.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            item {
-                                DashboardHeader(
+                            if (trackedLoaded && tracked.isNotEmpty()) {
+                                item {
+                                    DashboardHeader(
                                     language = language,
                                     usedTodayCount = usedTodayCount,
-                                    missingTodayCount = missingTodayCount,
                                     completedCount = completedTracked.size,
                                     todayMinutes = todayTotalMinutes,
-                                    onRefresh = { refreshTick++ },
-                                    onOpenOverview = { showOverviewSheet = true }
-                                )
-                            }
-                            if (usageAccess && missingTodayApps.isNotEmpty()) {
-                                item {
-                                    MissingTodayCard(
-                                        language = language,
-                                        apps = missingTodayApps
+                                    onRefresh = { requestUsageRefresh(force = true) },
+                                    onOpenGallery = {
+                                        screen = AppScreen.GALLERY
+                                    }
                                     )
                                 }
-                            }
-                            item {
-                                HomeFilterBar(
+                                item {
+                                    OutlinedTextField(
+                                    value = homeSearchQuery,
+                                    onValueChange = { homeSearchQuery = it },
+                                    label = { Text(text(language, "Ara", "Search", "Rechercher", "Buscar", "搜索", "खोजें", "Поиск", "بحث")) },
+                                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(22.dp),
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                        focusedLabelColor = secondaryTextColor(),
+                                        unfocusedLabelColor = secondaryTextColor(),
+                                        focusedLeadingIconColor = MaterialTheme.colorScheme.onSurface,
+                                        unfocusedLeadingIconColor = secondaryTextColor(),
+                                        cursorColor = MaterialTheme.colorScheme.onSurface,
+                                        focusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.26f else 0.18f),
+                                        unfocusedBorderColor = separatorColor(),
+                                        focusedContainerColor = rowSurfaceColor(),
+                                        unfocusedContainerColor = rowSurfaceColor()
+                                    )
+                                    )
+                                }
+                                item {
+                                    HomeFilterBar(
                                     language = language,
                                     selected = homeFilter,
                                     activeCount = activeTracked.size,
@@ -2007,18 +3148,29 @@ fun MainScreen(
                                     archivedCount = archivedTracked.size,
                                     allCount = tracked.size,
                                     onSelect = { homeFilter = it }
-                                )
+                                    )
+                                }
                             }
 
-                            if (!usageAccess) {
+                            if (trackedLoaded && tracked.isNotEmpty() && !usageAccess) {
                                 item {
                                     PermissionCard(language, onOpenUsageSettings)
                                 }
                             }
 
-                            if (tracked.isEmpty()) {
+                            if (!trackedLoaded) {
                                 item {
-                                    EmptyState(language, onAdd = { showPicker = true })
+                                    LoadingListState(language)
+                                }
+                            } else if (tracked.isEmpty()) {
+                                item {
+                                    EmptyHomeState(
+                                        language = language,
+                                        usageAccess = usageAccess,
+                                        onAdd = { showPicker = true },
+                                        onOpenUsageSettings = onOpenUsageSettings,
+                                        onShareTest = { showTestShare = true }
+                                    )
                                 }
                             } else if (filteredTracked.isEmpty()) {
                                 item {
@@ -2034,22 +3186,38 @@ fun MainScreen(
                                             LaunchedEffect(item.packageName) {
                                                 ensurePlayPublisher(item.packageName)
                                             }
+                                            SwipeableAppCard(
+                                                language = language,
+                                                onArchive = { onArchiveApp(item.packageName, true) },
+                                                onDelete = { deleteTarget = item }
+                                            ) {
                                             AppUsageCard(
                                                 item = item,
+                                                displayLabel = appInfo?.label?.takeUnless { it.isBlank() } ?: item.appLabel,
                                                 icon = appInfo?.icon,
                                                 playPublisherName = playPublishers[item.packageName],
                                                 language = language,
                                                 hasUsageAccess = usageAccess,
                                                 todayMinutes = if (usageAccess) todayUsageMap[item.packageName] else null,
                                                 totalMinutes = if (usageAccess) totalUsageMap[item.packageName] else null,
-                                                isTodayLoading = todayUsageLoading,
-                                                isTotalLoading = totalUsageLoading,
-                                                onOpenApp = { openTrackedApp(context, item.packageName) },
+                                                isTodayLoading = todayUsageLoading && todayUsageMap[item.packageName] == null,
+                                                isTotalLoading = totalUsageLoading && totalUsageMap[item.packageName] == null,
+                                                isMissingToday = usageAccess &&
+                                                    missingHighlightReady &&
+                                                    !todayUsageLoading &&
+                                                    !item.isArchived &&
+                                                    item.completedAtMillis == null &&
+                                                    (todayUsageMap[item.packageName] ?: 0L) == 0L,
+                                                onOpenApp = {
+                                                    persistLastUiState()
+                                                    openTrackedApp(context, item.packageName)
+                                                },
                                                 onClick = {
                                                     selectedPackageName = item.packageName
                                                     screen = AppScreen.DETAIL
                                                 }
                                             )
+                                            }
                                             if (index != filteredTracked.lastIndex) {
                                                 CanvasDivider(Modifier.padding(start = 78.dp, end = 14.dp))
                                             }
@@ -2058,13 +3226,15 @@ fun MainScreen(
                                 }
                             }
                         }
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .zIndex(1f)
-                        ) {
-                            TestAdAreaCard(language = language)
+                        if (!isPro) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .zIndex(1f)
+                            ) {
+                                TestAdAreaCard(language = language)
+                            }
                         }
                     }
                 }
@@ -2087,20 +3257,30 @@ fun MainScreen(
         )
     }
 
-    if (showOverviewSheet) {
-        AppOverviewSheet(
+    if (showProOffer && !isPro) {
+        ProOfferDialog(
             language = language,
-            tracked = tracked,
-            usageAccess = usageAccess,
-            todayUsageMap = todayUsageMap,
-            installedAppsByPackage = apps.associateBy { it.packageName },
-            playPublishers = playPublishers,
-            onDismiss = { showOverviewSheet = false },
-            onSelect = { packageName ->
-                selectedPackageName = packageName
-                screen = AppScreen.DETAIL
-                showOverviewSheet = false
-            }
+            state = proBillingState,
+            onBuy = { context.findActivity()?.let(proManager::launchPurchase) },
+            onLater = { showProOffer = false }
+        )
+    }
+    if (showProHub) {
+        ProHubSheet(
+            language = language,
+            isPro = isPro,
+            billingState = proBillingState,
+            storage = proStorage,
+            onBuy = { context.findActivity()?.let(proManager::launchPurchase) },
+            onDismiss = { showProHub = false }
+        )
+    }
+    if (showTestShare) {
+        TestShareSheet(
+            language = language,
+            isPro = isPro,
+            storage = proStorage,
+            onDismiss = { showTestShare = false }
         )
     }
 
@@ -2256,11 +3436,10 @@ fun MainScreen(
 private fun DashboardHeader(
     language: AppLanguage,
     usedTodayCount: Int,
-    missingTodayCount: Int,
     completedCount: Int,
     todayMinutes: Long,
     onRefresh: () -> Unit,
-    onOpenOverview: () -> Unit
+    onOpenGallery: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2282,13 +3461,13 @@ private fun DashboardHeader(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text(language, "Takip özeti", "Tracking summary", ar = "ملخص المتابعة"),
+                        text(language, "Takip", "Tracking", ar = "المتابعة"),
                         color = secondaryTextColor(),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text(language, "Uygulama özetleri", "App summaries", ar = "ملخصات التطبيقات"),
+                        text(language, "Uygulamalar", "Apps", ar = "التطبيقات"),
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -2299,16 +3478,9 @@ private fun DashboardHeader(
                         contentColor = MaterialTheme.colorScheme.onSurface,
                         shape = RoundedCornerShape(18.dp),
                         border = BorderStroke(1.dp, separatorColor()),
-                        modifier = Modifier.clickable(onClick = onOpenOverview)
+                        modifier = Modifier.clickable(onClick = onOpenGallery)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Text(text(language, "Özetler", "Summaries", ar = "الملخصات"), fontWeight = FontWeight.SemiBold)
-                        }
+                        GridDotsIcon(modifier = Modifier.padding(10.dp).size(18.dp))
                     }
                     Surface(
                         color = rowSurfaceColor(),
@@ -2327,12 +3499,31 @@ private fun DashboardHeader(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SummaryStatChip(text(language, "Kullanılan", "Used"), usedTodayCount.toString(), Modifier.weight(1f))
-                SummaryStatChip(text(language, "Eksik", "Missing", "Manquantes", "Faltantes", "缺少", "बाकी", "Не хватает", "ناقص"), missingTodayCount.toString(), Modifier.weight(1f))
                 SummaryStatChip(text(language, "Tamam", "Done", "Terminé", "Listo", "完成", "पूर्ण", "Готово", "تم"), completedCount.toString(), Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SummaryStatChip(text(language, "Bugün", "Today"), "$todayMinutes ${minuteLabel(language)}", Modifier.weight(1f))
                 SummaryStatChip(text(language, "Seri", "Streak"), "14+", Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun GridDotsIcon(modifier: Modifier = Modifier) {
+    ComposeCanvas(modifier = modifier) {
+        val gap = size.minDimension / 3.6f
+        val radius = size.minDimension / 7.6f
+        val startX = (size.width - gap * 2) / 2f
+        val startY = (size.height - gap * 2) / 2f
+        repeat(3) { row ->
+            repeat(3) { col ->
+                val cream = (row + col) % 2 == 0
+                drawCircle(
+                    color = if (cream) Color(0xFFE8DDC8) else Color(0xFFAFC8DD),
+                    radius = radius,
+                    center = Offset(startX + col * gap, startY + row * gap)
+                )
             }
         }
     }
@@ -2424,6 +3615,172 @@ private fun PermissionCard(language: AppLanguage, onOpenUsageSettings: () -> Uni
             Button(onClick = onOpenUsageSettings, shape = RoundedCornerShape(18.dp)) {
                 Text(text(language, "İzni aç", "Open"))
             }
+        }
+    }
+}
+
+@Composable
+private fun LoadingListState(language: AppLanguage) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = panelColor(strong = true), contentColor = MaterialTheme.colorScheme.onSurface),
+        shape = RoundedCornerShape(26.dp),
+        border = panelBorder(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(text(language, "Uygulamalar yükleniyor", "Loading apps"), fontWeight = FontWeight.Bold)
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(999.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = separatorColor()
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyHomeState(
+    language: AppLanguage,
+    usageAccess: Boolean,
+    onAdd: () -> Unit,
+    onOpenUsageSettings: () -> Unit,
+    onShareTest: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = canvasColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        shape = RoundedCornerShape(32.dp),
+        border = panelBorder(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            Modifier.padding(horizontal = 20.dp, vertical = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Surface(
+                color = rowSurfaceColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(22.dp),
+                border = BorderStroke(1.dp, separatorColor())
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Icon(Icons.Rounded.Done, contentDescription = null, modifier = Modifier.padding(10.dp).size(24.dp))
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Closed Test Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(text(language, "Test çalışma alanın hazır", "Your test workspace is ready"), color = secondaryTextColor(), fontSize = 13.sp)
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text(language, "İlk 14 günlük testini başlat", "Start your first 14-day test"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 24.sp
+                )
+                Text(
+                    text(
+                        language,
+                        "Telefondaki test uygulamalarını seç, günlük kullanımını takip et ve hiçbir test gününü kaçırma.",
+                        "Choose test apps from your phone, track daily usage, and never miss a testing day."
+                    ),
+                    color = secondaryTextColor(),
+                    lineHeight = 20.sp
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OnboardingStep("1", text(language, "Test uygulamalarını seç", "Choose test apps"), text(language, "Telefonundaki launcher uygulamalarından ekle.", "Add apps directly from your launcher list."))
+                OnboardingStep("2", text(language, "Kullanım erişimini aç", "Enable Usage Access"), text(language, "Bugün ve toplam kullanım dakikalarını otomatik oku.", "Automatically read today and total usage minutes."))
+                OnboardingStep("3", text(language, "14 günlük seriyi takip et", "Track the 14-day streak"), text(language, "Widget ve günlük bildirimlerle süreci düzenli tut.", "Stay consistent with the widget and daily reminders."))
+            }
+
+            Surface(
+                color = if (usageAccess) Color(0xFF1F6B45).copy(alpha = 0.18f) else rowSurfaceColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, if (usageAccess) Color(0xFF2F8A5D).copy(alpha = 0.45f) else separatorColor())
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(if (usageAccess) Icons.Rounded.Done else Icons.Rounded.Info, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text(
+                        if (usageAccess) text(language, "Kullanım erişimi hazır", "Usage Access is ready")
+                        else text(language, "Kullanım erişimi henüz kapalı", "Usage Access is not enabled yet"),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+
+            Button(onClick = onAdd, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+                Icon(Icons.Rounded.Add, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text(text(language, "Test uygulaması ekle", "Add test apps"), fontWeight = FontWeight.Bold)
+            }
+
+            if (!usageAccess) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onOpenUsageSettings),
+                    color = rowSurfaceColor(),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    border = BorderStroke(1.dp, separatorColor())
+                ) {
+                    Text(
+                        text(language, "Kullanım erişimini ayarla", "Set up Usage Access"),
+                        modifier = Modifier.padding(13.dp),
+                        textAlign = TextAlign.Center,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            TextButton(onClick = onShareTest, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(7.dp))
+                Text(text(language, "Yeni test uygulaması paylaş", "Share a new test app"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingStep(number: String, title: String, subtitle: String) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Surface(
+            color = rowSurfaceColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, separatorColor())
+        ) {
+            Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) {
+                Text(number, fontWeight = FontWeight.Bold)
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, color = secondaryTextColor(), fontSize = 12.sp)
         }
     }
 }
@@ -2522,8 +3879,62 @@ private fun CanvasDivider(modifier: Modifier = Modifier) {
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun SwipeableAppCard(
+    language: AppLanguage,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val state = rememberSwipeToDismissBoxState()
+    LaunchedEffect(state.currentValue) {
+        when (state.currentValue) {
+            SwipeToDismissBoxValue.StartToEnd -> {
+                onArchive()
+                state.reset()
+            }
+            SwipeToDismissBoxValue.EndToStart -> {
+                onDelete()
+                state.reset()
+            }
+            SwipeToDismissBoxValue.Settled -> Unit
+        }
+    }
+    SwipeToDismissBox(
+        state = state,
+        backgroundContent = {
+            val direction = state.dismissDirection
+            val archive = direction == SwipeToDismissBoxValue.StartToEnd
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(
+                        when (direction) {
+                            SwipeToDismissBoxValue.StartToEnd -> Color(0xFF1F6B45)
+                            SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.errorContainer
+                            SwipeToDismissBoxValue.Settled -> Color.Transparent
+                        }
+                    )
+                    .padding(horizontal = 20.dp),
+                contentAlignment = if (archive) Alignment.CenterStart else Alignment.CenterEnd
+            ) {
+                if (direction != SwipeToDismissBoxValue.Settled) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (archive) Icons.Rounded.Archive else Icons.Rounded.Delete, contentDescription = null)
+                        Text(if (archive) text(language, "Arşivle", "Archive") else text(language, "Sil", "Delete"), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        },
+        content = { content() }
+    )
+}
+
+@Composable
 private fun AppUsageCard(
     item: TrackedApp,
+    displayLabel: String,
     icon: Bitmap?,
     playPublisherName: String?,
     language: AppLanguage,
@@ -2532,36 +3943,15 @@ private fun AppUsageCard(
     totalMinutes: Long?,
     isTodayLoading: Boolean,
     isTotalLoading: Boolean,
+    isMissingToday: Boolean,
     onOpenApp: () -> Unit,
     onClick: () -> Unit
 ) {
     val day = SeriesCalculator.currentDay(item)
     val usageLine = when {
         !hasUsageAccess -> text(language, "Kullanım izni gerekli", "Usage permission required", "Autorisation d'utilisation requise", "Se requiere permiso de uso", "需要使用情况权限", "Usage अनुमति आवश्यक है", "Требуется доступ к статистике")
-        todayMinutes == null -> text(language, "Bugün yükleniyor", "Today loading", "Aujourd'hui en chargement", "Hoy cargando", "今天加载中", "आज लोड हो रहा है", "Сегодня загружается", "اليوم قيد التحميل")
-        isTotalLoading -> text(
-            language,
-            "Bugün $todayMinutes ${minuteLabel(language)} | Toplam yükleniyor",
-            "Today $todayMinutes ${minuteLabel(language)} | Total loading",
-            "Aujourd'hui $todayMinutes ${minuteLabel(language)} | Total en chargement",
-            "Hoy $todayMinutes ${minuteLabel(language)} | Total cargando",
-            "今天 $todayMinutes ${minuteLabel(language)} | 总计加载中",
-            "आज $todayMinutes ${minuteLabel(language)} | कुल लोड हो रहा है",
-            "Сегодня $todayMinutes ${minuteLabel(language)} | Итого загружается",
-            "اليوم $todayMinutes ${minuteLabel(language)} | المجموع قيد التحميل"
-        )
-        totalMinutes == null -> text(
-            language,
-            "Bugün $todayMinutes ${minuteLabel(language)} | Toplam yükleniyor",
-            "Today $todayMinutes ${minuteLabel(language)} | Total loading",
-            "Aujourd'hui $todayMinutes ${minuteLabel(language)} | Total en chargement",
-            "Hoy $todayMinutes ${minuteLabel(language)} | Total cargando",
-            "今天 $todayMinutes ${minuteLabel(language)} | 总计加载中",
-            "आज $todayMinutes ${minuteLabel(language)} | कुल लोड हो रहा है",
-            "Сегодня $todayMinutes ${minuteLabel(language)} | Итого загружается",
-            "اليوم $todayMinutes ${minuteLabel(language)} | المجموع قيد التحميل"
-        )
-        else -> text(
+        isTodayLoading || todayMinutes == null -> text(language, "Bugün yükleniyor", "Today loading", "Aujourd'hui en chargement", "Hoy cargando", "今天加载中", "आज लोड हो रहा है", "Сегодня загружается", "اليوم قيد التحميل")
+        totalMinutes != null -> text(
             language,
             "Bugün $todayMinutes ${minuteLabel(language)} | Toplam $totalMinutes ${minuteLabel(language)}",
             "Today $todayMinutes ${minuteLabel(language)} | Total $totalMinutes ${minuteLabel(language)}",
@@ -2572,11 +3962,40 @@ private fun AppUsageCard(
             "Сегодня $todayMinutes ${minuteLabel(language)} | Итого $totalMinutes ${minuteLabel(language)}",
             "اليوم $todayMinutes ${minuteLabel(language)} | المجموع $totalMinutes ${minuteLabel(language)}"
         )
+        isTotalLoading || totalMinutes == null -> text(
+            language,
+            "Bugün $todayMinutes ${minuteLabel(language)} | Toplam yükleniyor",
+            "Today $todayMinutes ${minuteLabel(language)} | Total loading",
+            "Aujourd'hui $todayMinutes ${minuteLabel(language)} | Total en chargement",
+            "Hoy $todayMinutes ${minuteLabel(language)} | Total cargando",
+            "今天 $todayMinutes ${minuteLabel(language)} | 总计加载中",
+            "आज $todayMinutes ${minuteLabel(language)} | कुल लोड हो रहा है",
+            "Сегодня $todayMinutes ${minuteLabel(language)} | Итого загружается",
+            "اليوم $todayMinutes ${minuteLabel(language)} | المجموع قيد التحميل"
+        )
+        else -> ""
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                if (isMissingToday) {
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = if (isDarkScheme()) 0.18f else 0.42f)
+                } else {
+                    Color.Transparent
+                }
+            )
+            .border(
+                width = if (isMissingToday) 1.dp else 0.dp,
+                color = if (isMissingToday) {
+                    MaterialTheme.colorScheme.error.copy(alpha = if (isDarkScheme()) 0.28f else 0.16f)
+                } else {
+                    Color.Transparent
+                },
+                shape = RoundedCornerShape(22.dp)
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -2607,7 +4026,7 @@ private fun AppUsageCard(
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    item.appLabel,
+                    displayLabel,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.sp,
                     maxLines = 1,
@@ -2655,8 +4074,8 @@ private fun AppUsageCard(
                 .fillMaxWidth()
                 .height(3.dp)
                 .clip(RoundedCornerShape(99.dp)),
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.74f else 0.58f),
-            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.10f else 0.08f)
+            color = Color(0xFF1B5E20),
+            trackColor = Color(0xFF1B5E20).copy(alpha = if (isDarkScheme()) 0.30f else 0.18f)
         )
     }
 }
@@ -3062,6 +4481,7 @@ private fun DaySetupDialog(
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit
 ) {
+    val context = LocalContext.current
     val dayRange = 1..20
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -3070,6 +4490,11 @@ private fun DaySetupDialog(
         confirmValueChange = { it != SheetValue.Hidden }
     )
     val initialDay = target.initialDay.coerceIn(dayRange.first, dayRange.last)
+    val appIcon = remember(target.packageName) {
+        runCatching {
+            drawableToBitmap(context.packageManager.getApplicationIcon(target.packageName))
+        }.getOrNull()
+    }
     val selectedDay by remember {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
@@ -3117,50 +4542,118 @@ private fun DaySetupDialog(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Surface(
-                    color = rowSurfaceColor(),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.16f else 0.10f),
                     contentColor = MaterialTheme.colorScheme.onSurface,
                     shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, separatorColor())
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.30f else 0.18f))
                 ) {
-                    Icon(
-                        Icons.Rounded.Refresh,
-                        contentDescription = null,
-                        modifier = Modifier.padding(11.dp).size(22.dp)
-                    )
+                    if (appIcon != null) {
+                        Image(
+                            bitmap = appIcon.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .padding(7.dp)
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                        )
+                    } else {
+                        Icon(
+                            Icons.Rounded.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.padding(11.dp).size(22.dp)
+                        )
+                    }
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         text(language, "Test günü", "Test day"),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 22.sp
+                        fontSize = 24.sp,
+                        letterSpacing = (-0.3).sp
                     )
                     Text(
                         target.label,
-                        color = secondaryTextColor(),
-                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Surface(
-                    color = rowSurfaceColor(),
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(1.dp, separatorColor()),
-                    modifier = Modifier.clickable(onClick = onDismiss)
-                ) {
-                    Text(
-                        text(language, "Kapat", "Close", "Fermer", "Cerrar", "关闭", "बंद करें", "Закрыть"),
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                        fontWeight = FontWeight.SemiBold
-                    )
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (target.isNew) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.18f else 0.12f),
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            shape = RoundedCornerShape(999.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.34f else 0.22f))
+                        ) {
+                            Text(
+                                text(language, "Yeni", "New", "Nouveau", "Nuevo", "新建", "नया", "Новый", "جديد"),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    Surface(
+                        color = rowSurfaceColor(),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, separatorColor()),
+                        modifier = Modifier.clickable(onClick = onDismiss)
+                    ) {
+                        Text(
+                            text(language, "Kapat", "Close", "Fermer", "Cerrar", "关闭", "बंद करें", "Закрыть"),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
 
-            Text(
-                text(language, "Bugün bu uygulama testinin kaçıncı günü? 1 ile 20 arasında seç.", "Which test day is this app on today? Choose between 1 and 20."),
-                color = secondaryTextColor()
-            )
+            Surface(
+                color = rowSurfaceColor(),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, separatorColor())
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text(language, "Bugün bu uygulama testinin kaçıncı günü? 1 ile 20 arasında seç.", "Which test day is this app on today? Choose between 1 and 20."),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.84f),
+                        fontSize = 14.sp
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.14f else 0.10f),
+                            shape = RoundedCornerShape(999.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.28f else 0.18f)
+                            )
+                        ) {
+                            Text(
+                                text(language, "Gün", "Day"),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Text(
+                            "$selectedDay / 20",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
 
             Surface(
                 color = rowSurfaceColor(),
@@ -3185,7 +4678,7 @@ private fun DaySetupDialog(
                             )
                             Text(
                                 selectedDay.toString(),
-                                fontSize = 40.sp,
+                                fontSize = 44.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -3348,18 +4841,30 @@ private fun SettingsPage(
     reminderHour: Int,
     dateFormat: DateDisplayFormat,
     notificationAllowed: Boolean,
+    overlayAllowed: Boolean,
+    liveOverlayEnabled: Boolean,
+    showLiveOverlayOption: Boolean,
+    isPro: Boolean,
     languageMode: LanguageMode,
     onLanguageChange: (LanguageMode) -> Unit,
     onThemeChange: (AppTheme) -> Unit,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onReminderHourChange: (Int) -> Unit,
     onDateFormatChange: (DateDisplayFormat) -> Unit,
+    onLiveOverlayChange: (Boolean) -> Unit,
     appVersionName: String,
     playUpdateState: PlayUpdateState,
     onRequestNotificationPermission: () -> Unit,
     onSendMail: () -> Unit,
     onDonate: () -> Unit,
+    supportAdStatus: String?,
+    supportAdLoading: Boolean,
+    supportAdReady: Boolean,
+    onWatchSupportAd: () -> Unit,
+    onShareApp: () -> Unit,
     onOpenPolicyPage: () -> Unit,
+    onOpenStudioPage: () -> Unit,
+    onOpenPro: () -> Unit,
     onOpenUpdate: () -> Unit
 ) {
     LazyColumn(
@@ -3370,6 +4875,20 @@ private fun SettingsPage(
         contentPadding = PaddingValues(bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        item {
+            SettingsCard {
+                SettingsAction(
+                    icon = { Icon(Icons.Rounded.Star, contentDescription = null) },
+                    title = if (isPro) "Closed Test Tracker Pro" else text(language, "Pro'ya geç", "Get Pro"),
+                    subtitle = if (isPro) {
+                        text(language, "Pro aktif. Reklamlar kapalı ve tüm Pro araçları açık.", "Pro is active. Ads are removed and all Pro tools are unlocked.")
+                    } else {
+                        text(language, "Tek seferlik satın alma; şablonlar, testçi notları ve test kaynakları.", "One-time purchase for templates, tester notes and testing resources.")
+                    },
+                    onClick = onOpenPro
+                )
+        }
+        }
         item {
             SettingsCard {
                 SettingsSection(
@@ -3580,61 +5099,55 @@ private fun SettingsPage(
                 )
             }
         }
-        item {
-            SettingsCard {
-                SettingsSection(
-                    icon = { Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null) },
-                    title = text(language, "Yardım", "Help", "Aide", "Ayuda", "帮助", "मदद", "Помощь")
-                ) {
+        if (showLiveOverlayOption) {
+            item {
+                SettingsCard {
                     Surface(
-                        color = rowSurfaceColor(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .clickable { onLiveOverlayChange(!liveOverlayEnabled) },
+                        color = if (isDarkScheme()) Color.White.copy(alpha = 0.055f) else Color.White.copy(alpha = 0.62f),
                         contentColor = MaterialTheme.colorScheme.onSurface,
-                        shape = RoundedCornerShape(22.dp),
+                        shape = RoundedCornerShape(20.dp),
                         border = BorderStroke(1.dp, separatorColor())
                     ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text(
-                                text(
-                                    language,
-                                    "Kapalı test sürecini hızlı kontrol et.",
-                                    "Quickly control your closed-test process.",
-                                    "Contrôlez rapidement votre test fermé.",
-                                    "Controla rápidamente tu prueba cerrada.",
-                                    "快速管理封闭测试流程。",
-                                    "अपने closed test को तेज़ी से नियंत्रित करें।",
-                                    "Быстро контролируйте закрытый тест."
-                                ),
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text(
-                                    language,
-                                    "Uygulama ekle, test gününü ayarla, kullanım iznini aç ve geri döndüğünde süreleri otomatik güncel gör. Karttaki uygulama ikonuna dokunarak test ettiğin uygulamayı açabilirsin.",
-                                    "Add an app, set the test day, enable Usage Access, and see refreshed minutes when you return. Tap the app icon on a card to open the tested app.",
-                                    "Ajoutez une application, définissez le jour de test, activez l'accès à l'utilisation et retrouvez les minutes mises à jour en revenant. Touchez l'icône de l'application pour l'ouvrir.",
-                                    "Añade una app, define el día de prueba, activa Acceso de uso y ve los minutos actualizados al volver. Toca el icono de la app para abrirla.",
-                                    "添加应用、设置测试日、开启使用情况访问，返回后即可看到更新后的分钟数。点按卡片上的应用图标可打开测试应用。",
-                                    "ऐप जोड़ें, टेस्ट दिन सेट करें, Usage Access चालू करें और वापस आने पर अपडेटेड मिनट देखें। टेस्ट ऐप खोलने के लिए कार्ड के ऐप आइकन पर टैप करें।",
-                                    "Добавьте приложение, задайте день теста, включите доступ к статистике и при возврате увидите обновленные минуты. Нажмите значок приложения на карточке, чтобы открыть тестируемое приложение."
-                                ),
-                                color = secondaryTextColor()
-                            )
-                            Button(
-                                onClick = onSendMail,
-                                shape = RoundedCornerShape(18.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.onSurface,
-                                    contentColor = MaterialTheme.colorScheme.surface
-                                ),
-                                modifier = Modifier.fillMaxWidth()
+                            Surface(
+                                color = panelColor(),
+                                contentColor = MaterialTheme.colorScheme.onSurface,
+                                shape = RoundedCornerShape(16.dp),
+                                border = panelBorder()
                             ) {
-                                Icon(Icons.Rounded.Email, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.size(8.dp))
-                                Text(text(language, "Destek al", "Get support", "Obtenir de l'aide", "Obtener ayuda", "获取支持", "सहायता लें", "Получить поддержку"))
+                                Box(Modifier.padding(8.dp)) {
+                                    Icon(Icons.Rounded.Info, contentDescription = null)
+                                }
                             }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text(language, "Canlı süre balonu", "Live usage bubble", "Bulle de durée en direct", "Burbuja de uso en vivo", "实时使用气泡", "लाइव उपयोग बबल", "Плавающее время", "فقاعة الوقت المباشر", de = "Live-Zeitblase", ja = "ライブ使用時間バブル", pt = "Bolha de uso ao vivo", id = "Gelembung durasi langsung"),
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    if (liveOverlayEnabled && overlayAllowed) {
+                                        text(language, "Açık. Test uygulamasındayken üstte bugünkü dakika görünür.", "On. Today's minutes appear above test apps.", "Activé. Les minutes du jour s'affichent au-dessus des apps de test.", "Activado. Los minutos de hoy aparecen sobre las apps de prueba.", "已开启。测试应用上方会显示今天的分钟数。", "चालू। टेस्ट ऐप्स के ऊपर आज के मिनट दिखेंगे।", "Включено. Минуты за сегодня показываются поверх тестовых приложений.", "مفعّل. تظهر دقائق اليوم فوق تطبيقات الاختبار.", de = "Aktiv. Heutige Minuten erscheinen über Test-Apps.", ja = "オン。テストアプリ上に今日の分数が表示されます。", pt = "Ativado. Os minutos de hoje aparecem sobre os apps de teste.", id = "Aktif. Menit hari ini muncul di atas aplikasi tes.")
+                                    } else if (liveOverlayEnabled) {
+                                        text(language, "İzin bekleniyor. Dokunup üstte gösterme iznini aç.", "Permission needed. Tap and allow display over other apps.", "Autorisation requise. Touchez pour autoriser l'affichage par-dessus les apps.", "Permiso necesario. Toca y permite mostrar sobre otras apps.", "需要权限。点按并允许在其他应用上显示。", "अनुमति चाहिए। टैप करके other apps के ऊपर दिखाने की अनुमति दें।", "Нужно разрешение. Нажмите и разрешите показ поверх других приложений.", "يلزم الإذن. اضغط واسمح بالظهور فوق التطبيقات الأخرى.", de = "Berechtigung nötig. Tippen und Anzeige über anderen Apps erlauben.", ja = "権限が必要です。他のアプリの上に表示を許可してください。", pt = "Permissão necessária. Toque e permita exibir sobre outros apps.", id = "Butuh izin. Ketuk dan izinkan tampil di atas aplikasi lain.")
+                                    } else {
+                                        text(language, "Kapalı. Sadece debug denemesi için.", "Off. Debug test only.", "Désactivé. Test debug uniquement.", "Desactivado. Solo prueba debug.", "已关闭。仅用于调试测试。", "बंद। केवल debug टेस्ट के लिए।", "Выключено. Только для debug-теста.", "متوقف. لاختبار debug فقط.", de = "Aus. Nur Debug-Test.", ja = "オフ。デバッグテスト専用です。", pt = "Desativado. Apenas teste debug.", id = "Mati. Hanya tes debug.")
+                                    },
+                                    color = secondaryTextColor(),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Switch(
+                                checked = liveOverlayEnabled && overlayAllowed,
+                                onCheckedChange = { onLiveOverlayChange(it) }
+                            )
                         }
                     }
                 }
@@ -3675,32 +5188,6 @@ private fun SettingsPage(
                             )
                         )
                         InfoBullet(
-                            title = text(language, "Nasıl kullanılır?", "How to use", "Utilisation", "Cómo usar", "如何使用", "कैसे उपयोग करें", "Как использовать"),
-                            body = text(
-                                language,
-                                "Üstteki + tuşuyla test uygulamasını seç. Günü 1'den başlatabilir veya mevcut test gününü ayarlayabilirsin. Sonra karttaki ikona dokunup uygulamayı aç, geri dönünce süreler otomatik yenilenir.",
-                                "Use the + button to pick a test app. Start from day 1 or set the current test day. Then tap the app icon on the card to open it; when you return, minutes refresh automatically.",
-                                "Utilisez le bouton + pour choisir une application de test. Commencez au jour 1 ou définissez le jour actuel. Touchez ensuite l'icône de la carte pour ouvrir l'application ; au retour, les minutes se mettent à jour automatiquement.",
-                                "Usa el botón + para elegir una app de prueba. Empieza desde el día 1 o ajusta el día actual. Luego toca el icono de la tarjeta para abrirla; al volver, los minutos se actualizan automáticamente.",
-                                "使用顶部 + 按钮选择测试应用。可以从第 1 天开始，也可以设置当前测试日。然后点按卡片图标打开应用；返回后分钟数会自动刷新。",
-                                "+ बटन से टेस्ट ऐप चुनें। दिन 1 से शुरू करें या वर्तमान टेस्ट दिन सेट करें। फिर कार्ड के आइकन पर टैप करके ऐप खोलें; वापस आने पर मिनट अपने आप अपडेट होंगे।",
-                                "Нажмите +, чтобы выбрать тестируемое приложение. Начните с 1-го дня или задайте текущий день теста. Затем нажмите значок приложения на карточке; при возврате минуты обновятся автоматически."
-                            )
-                        )
-                        InfoBullet(
-                            title = text(language, "İzinler ve gizlilik", "Permissions and privacy", "Autorisations et confidentialité", "Permisos y privacidad", "权限与隐私", "अनुमतियां और गोपनीयता", "Разрешения и конфиденциальность"),
-                            body = text(
-                                language,
-                                "Kullanım erişimi sadece seçtiğin uygulamaların sürelerini okumak için kullanılır. Uygulama listesi ve kullanım verileri cihazında kalır; reklam veya analiz amacıyla paylaşılmaz.",
-                                "Usage Access is used only to read minutes for apps you choose. The app list and usage data stay on your device and are not shared for ads or analytics.",
-                                "L'accès à l'utilisation sert uniquement à lire les minutes des applications choisies. La liste et les données restent sur votre appareil et ne sont pas partagées pour la publicité ou l'analyse.",
-                                "El Acceso de uso solo se usa para leer los minutos de las apps que eliges. La lista y los datos permanecen en tu dispositivo y no se comparten para anuncios ni análisis.",
-                                "使用情况访问仅用于读取你选择的应用分钟数。应用列表和使用数据保留在设备上，不会用于广告或分析共享。",
-                                "Usage Access केवल चुने गए ऐप्स के मिनट पढ़ने के लिए उपयोग होता है। ऐप सूची और उपयोग डेटा आपके डिवाइस पर रहता है; विज्ञापन या analytics के लिए साझा नहीं किया जाता।",
-                                "Доступ к статистике используется только для чтения минут выбранных приложений. Список приложений и данные остаются на устройстве и не передаются для рекламы или аналитики."
-                            )
-                        )
-                        InfoBullet(
                             title = text(language, "Not", "Note", "Note", "Nota", "说明", "नोट", "Примечание"),
                             body = text(
                                 language,
@@ -3713,6 +5200,36 @@ private fun SettingsPage(
                                 "Для web/PWA-ярлыков время может учитываться в браузере. Android не показывает использование по сайтам как отдельные приложения, поэтому некоторые веб-приложения могут показывать 0 мин."
                             )
                         )
+                        Button(
+                            onClick = onOpenStudioPage,
+                            shape = RoundedCornerShape(18.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = rowSurfaceColor(),
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = panelBorder(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(8.dp))
+                            Text(
+                                text(
+                                    language,
+                                    "MD Studio uygulamalarını gör",
+                                    "See MD Studio apps",
+                                    "Voir les apps MD Studio",
+                                    "Ver apps de MD Studio",
+                                    "查看 MD Studio 应用",
+                                    "MD Studio ऐप्स देखें",
+                                    "Посмотреть приложения MD Studio",
+                                    "شاهد تطبيقات MD Studio",
+                                    de = "MD Studio Apps ansehen",
+                                    ja = "MD Studio のアプリを見る",
+                                    pt = "Ver apps da MD Studio",
+                                    id = "Lihat aplikasi MD Studio"
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -3721,7 +5238,7 @@ private fun SettingsPage(
             SettingsCard {
                 SettingsSection(
                     icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-                    title = text(language, "Yasal bilgiler", "Legal information", "Informations légales", "Información legal", "法律信息", "कानूनी जानकारी", "Правовая информация")
+                    title = text(language, "Kullanım Şartları ve Gizlilik Politikası", "Term of usage & Privacy Policy", "Conditions d'utilisation et politique de confidentialité", "Términos de uso y política de privacidad", "使用条款与隐私政策", "उपयोग की शर्तें और गोपनीयता नीति", "Условия использования и политика конфиденциальности", "شروط الاستخدام وسياسة الخصوصية")
                 ) {
                     Button(
                         onClick = onOpenPolicyPage,
@@ -3735,9 +5252,29 @@ private fun SettingsPage(
                     ) {
                         Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.size(8.dp))
-                        Text(text(language, "Sayfayı aç", "Open page", "Ouvrir la page", "Abrir página", "打开页面", "पेज खोलें", "Открыть страницу"))
+                        Text(text(language, "Aç", "Open", "Ouvrir", "Abrir", "打开", "खोलें", "Открыть", "فتح"))
                     }
                 }
+            }
+        }
+        item {
+            SettingsCard {
+                SettingsAction(
+                    icon = { Icon(Icons.Rounded.Share, contentDescription = null) },
+                    title = text(language, "Uygulamayı arkadaşlarınla paylaş", "Share app with friends", "Partager avec des amis", "Compartir con amigos", "与朋友分享应用", "दोस्तों के साथ ऐप साझा करें", "Поделиться с друзьями", "شارك التطبيق مع الأصدقاء"),
+                    subtitle = text(
+                        language,
+                        "Closed Test Tracker bağlantısını paylaş.",
+                        "Share the Closed Test Tracker link.",
+                        "Partagez le lien Closed Test Tracker.",
+                        "Comparte el enlace de Closed Test Tracker.",
+                        "分享 Closed Test Tracker 链接。",
+                        "Closed Test Tracker लिंक साझा करें।",
+                        "Поделитесь ссылкой Closed Test Tracker.",
+                        "شارك رابط Closed Test Tracker."
+                    ),
+                    onClick = onShareApp
+                )
             }
         }
         item {
@@ -3748,6 +5285,23 @@ private fun SettingsPage(
                     subtitle = SUPPORT_MAIL,
                     onClick = onSendMail
                 )
+            }
+        }
+        if (!isPro) {
+            item {
+                SettingsCard {
+                    SettingsAction(
+                        icon = { Icon(Icons.Rounded.Favorite, contentDescription = null) },
+                        title = text(language, "Reklam izleyerek destek ol", "Support by watching ads", "Soutenir en regardant des pubs", "Apoyar viendo anuncios", "通过观看广告支持", "विज्ञापन देखकर समर्थन करें", "Поддержать просмотром рекламы", "ادعم عبر مشاهدة الإعلانات"),
+                        subtitle = when {
+                            supportAdReady -> text(language, "Reklam hazır. İzlemek için dokun.", "Ad is ready. Tap to watch.")
+                            supportAdLoading -> text(language, "Reklam hazırlanıyor...", "Preparing ad...")
+                            supportAdStatus != null -> supportAdStatus
+                            else -> text(language, "İstersen reklam izleyerek uygulamayı destekleyebilirsin.", "You can watch an ad to support the app.")
+                        },
+                        onClick = onWatchSupportAd
+                    )
+                }
             }
         }
         item {
@@ -4015,296 +5569,350 @@ private fun EmptyDetailState(title: String, body: String) {
 }
 
 @Composable
-private fun MissingTodayCard(language: AppLanguage, apps: List<TrackedApp>) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = canvasColor(), contentColor = MaterialTheme.colorScheme.onSurface),
-        shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, separatorColor()),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(text(language, "Bugün eksik olanlar", "Missing today", ar = "الناقص اليوم"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text("${apps.size}", color = secondaryTextColor(), fontWeight = FontWeight.Bold)
+private fun AppGalleryScreen(
+    modifier: Modifier = Modifier,
+    language: AppLanguage,
+    screenshotMode: Boolean,
+    appDisplayName: String,
+    appLogoBitmap: Bitmap?,
+    tracked: List<TrackedApp>,
+    installedAppsByPackage: Map<String, InstalledApp>,
+    onSelect: (String) -> Unit
+) {
+    val packageManager = LocalContext.current.packageManager
+    val visibleTracked = tracked.sortedWith(
+        compareByDescending<TrackedApp> { !it.isArchived }
+            .thenByDescending { it.completedAtMillis == null }
+            .thenByDescending { SeriesCalculator.currentDay(it) }
+            .thenBy { it.appLabel.lowercase() }
+    )
+    val itemCount = visibleTracked.size.coerceAtLeast(1)
+    val activeCount = visibleTracked.count { !it.isArchived && it.completedAtMillis == null }
+    val completedCount = visibleTracked.count { it.completedAtMillis != null }
+    val activeDays = visibleTracked
+        .filter { !it.isArchived && it.completedAtMillis == null }
+        .map { SeriesCalculator.currentDay(it) }
+    val summaryText = gallerySummaryText(
+        language = language,
+        activeCount = activeCount,
+        completedCount = completedCount,
+        minDay = activeDays.minOrNull(),
+        maxDay = activeDays.maxOrNull()
+    )
+    val columns = when {
+        screenshotMode && itemCount > 42 -> 8
+        screenshotMode && itemCount > 30 -> 7
+        screenshotMode && itemCount > 20 -> 6
+        else -> 5
+    }
+
+    if (visibleTracked.isEmpty()) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(text(language, "Henüz uygulama eklenmedi", "No apps added yet"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(text(language, "Takip edilen uygulamalar burada ikon olarak görünür.", "Tracked apps appear here as icons."), color = secondaryTextColor())
+        }
+    } else {
+        BoxWithConstraints(
+            modifier = modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            canvasColor(),
+                            panelColor(),
+                            canvasColor()
+                        )
+                    )
+                )
+        ) {
+            val horizontalPadding = if (screenshotMode) 12.dp else 18.dp
+            val verticalPadding = if (screenshotMode) 12.dp else 24.dp
+            val horizontalGap = if (screenshotMode) 10.dp else 22.dp
+            val verticalGap = if (screenshotMode) 8.dp else 24.dp
+            val headerHeight = if (screenshotMode) 76.dp else 84.dp
+            val footerHeight = if (screenshotMode) 74.dp else 92.dp
+            val rows = ((visibleTracked.size + columns - 1) / columns).coerceAtLeast(1)
+            val availableWidth = maxWidth - horizontalPadding * 2 - horizontalGap * (columns - 1)
+            val availableHeight = maxHeight - headerHeight - footerHeight - verticalPadding * 2 - verticalGap * (rows - 1)
+            val maxCellWidth = availableWidth / columns
+            val maxCellHeight = availableHeight / rows
+            val iconSize = if (screenshotMode) {
+                minOf(maxCellWidth * 0.82f, maxCellHeight * 0.76f, 68.dp).coerceAtLeast(34.dp)
+            } else {
+                68.dp
             }
-            Text(
-                text(language, "Bugün açılmayan uygulamalar aşağıda.", "Apps not opened today are listed below.", ar = "التطبيقات التي لم تُفتح اليوم تظهر أدناه."),
-                color = secondaryTextColor(),
-                fontSize = 12.sp
-            )
-            apps.take(3).forEach { app ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = app.appLabel,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+            val badgeFontSize = when {
+                iconSize < 42.dp -> 7.sp
+                iconSize < 52.dp -> 8.sp
+                else -> 9.sp
+            }
+            val badgeHorizontalPadding = when {
+                iconSize < 42.dp -> 4.dp
+                iconSize < 52.dp -> 5.dp
+                else -> 6.dp
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(headerHeight)
+                    .padding(horizontal = if (screenshotMode) 18.dp else 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (appLogoBitmap != null) {
+                    Image(
+                        bitmap = appLogoBitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.size(if (screenshotMode) 30.dp else 34.dp)
                     )
-                    Text(
-                        text = app.packageName,
-                        color = secondaryTextColor(),
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                } else {
+                    GridDotsIcon(Modifier.size(if (screenshotMode) 28.dp else 30.dp))
                 }
+                Text(
+                    appDisplayName,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Black,
+                    fontSize = if (screenshotMode) 22.sp else 24.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = headerHeight),
+                contentPadding = PaddingValues(
+                    start = horizontalPadding,
+                    end = horizontalPadding,
+                    top = verticalPadding,
+                    bottom = footerHeight + verticalPadding
+                ),
+                horizontalArrangement = Arrangement.spacedBy(horizontalGap),
+                verticalArrangement = Arrangement.spacedBy(verticalGap),
+                userScrollEnabled = !screenshotMode
+            ) {
+                items(
+                    items = visibleTracked,
+                    key = { it.packageName }
+                ) { item ->
+                    val day = SeriesCalculator.currentDay(item)
+                    val installedApp = installedAppsByPackage[item.packageName]
+                    val iconBitmap = installedApp?.icon ?: remember(item.packageName, installedApp) {
+                        appIconBitmap(packageManager, item.packageName)
+                    }
+                    val dayLabel = when {
+                        item.isArchived -> text(language, "Arşiv", "Archive")
+                        item.completedAtMillis != null -> text(language, "Tamam", "Done", "Terminé", "Listo", "完成", "पूर्ण", "Готово", "تم")
+                        else -> "$day/14"
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(0.92f)
+                            .clickable(enabled = !screenshotMode) { onSelect(item.packageName) }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .size(iconSize)
+                                .shadow(
+                                    elevation = 8.dp,
+                                    shape = RoundedCornerShape(16.dp),
+                                    ambientColor = Color.Black.copy(alpha = 0.22f),
+                                    spotColor = Color.Black.copy(alpha = 0.16f)
+                                )
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xFF111111)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (iconBitmap != null) {
+                                Image(
+                                    bitmap = iconBitmap.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(16.dp))
+                                )
+                            } else {
+                                GridPlaceholderIcon(Modifier.fillMaxSize())
+                            }
+                        }
+                        Surface(
+                            color = Color(0xFFFFA726),
+                            contentColor = Color.Black,
+                            shape = RoundedCornerShape(999.dp),
+                            shadowElevation = 1.dp,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .graphicsLayer {
+                                    translationX = 8.dp.toPx()
+                                    translationY = 2.dp.toPx()
+                                }
+                        ) {
+                            Text(
+                                text = dayLabel,
+                                modifier = Modifier.padding(horizontal = badgeHorizontalPadding, vertical = 3.dp),
+                                fontWeight = FontWeight.Black,
+                                fontSize = badgeFontSize
+                            )
+                        }
+                    }
+                }
+            }
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = if (screenshotMode) 16.dp else 18.dp, vertical = if (screenshotMode) 12.dp else 16.dp),
+                color = Color(0xFF111111).copy(alpha = if (screenshotMode) 0.90f else 0.86f),
+                contentColor = Color.White,
+                shape = RoundedCornerShape(if (screenshotMode) 22.dp else 26.dp),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+                shadowElevation = if (screenshotMode) 0.dp else 8.dp
+            ) {
+                Text(
+                    text = summaryText,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = if (screenshotMode) 12.sp else 13.sp,
+                    lineHeight = if (screenshotMode) 15.sp else 17.sp,
+                    color = Color.White.copy(alpha = 0.94f),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppOverviewSheet(
+private fun ScreenshotSharePrompt(
+    modifier: Modifier = Modifier,
     language: AppLanguage,
-    tracked: List<TrackedApp>,
-    usageAccess: Boolean,
-    todayUsageMap: Map<String, Long>,
-    installedAppsByPackage: Map<String, InstalledApp>,
-    playPublishers: Map<String, String>,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit
+    onShare: () -> Unit,
+    onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var query by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(OverviewFilter.ALL) }
-    val activeCount = tracked.count { !it.isArchived && it.completedAtMillis == null }
-    val completedCount = tracked.count { !it.isArchived && it.completedAtMillis != null }
-    val archivedCount = tracked.count { it.isArchived }
-    val filteredTracked = remember(tracked, query, filter) {
-        val q = query.trim().lowercase()
-        tracked.filter { item ->
-            val matchesQuery = q.isBlank() || item.appLabel.lowercase().contains(q) || item.packageName.lowercase().contains(q)
-            val matchesFilter = when (filter) {
-                OverviewFilter.ALL -> true
-                OverviewFilter.ACTIVE -> !item.isArchived && item.completedAtMillis == null
-                OverviewFilter.COMPLETED -> !item.isArchived && item.completedAtMillis != null
-                OverviewFilter.ARCHIVED -> item.isArchived
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color(0xFF111111).copy(alpha = 0.96f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+        shadowElevation = 18.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text(language, "Ekran görüntüsü alındı", "Screenshot captured", "Capture d'écran prise", "Captura hecha", "已截屏", "स्क्रीनशॉट लिया गया", "Скриншот сделан", "تم التقاط لقطة الشاشة", de = "Screenshot aufgenommen", ja = "スクリーンショットを撮影しました", pt = "Captura feita", id = "Screenshot diambil"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+                Text(
+                    text(language, "Bu özeti paylaşmak ister misin?", "Share this summary?", "Partager ce résumé ?", "¿Compartir este resumen?", "分享此摘要？", "यह सारांश साझा करें?", "Поделиться сводкой?", "هل تريد مشاركة هذا الملخص؟", de = "Diese Übersicht teilen?", ja = "この概要を共有しますか？", pt = "Compartilhar este resumo?", id = "Bagikan ringkasan ini?"),
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 11.sp
+                )
             }
-            matchesQuery && matchesFilter
-        }.sortedWith(
-            compareByDescending<TrackedApp> { !it.isArchived }
-                .thenByDescending { it.completedAtMillis == null }
-                .thenByDescending { SeriesCalculator.currentDay(it) }
-                .thenBy { it.appLabel.lowercase() }
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text(language, "Kapat", "Close", "Fermer", "Cerrar", "关闭", "बंद करें", "Закрыть", "إغلاق", de = "Schließen", ja = "閉じる", pt = "Fechar", id = "Tutup"),
+                    color = Color.White.copy(alpha = 0.76f)
+                )
+            }
+            Button(
+                onClick = onShare,
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Color.Black
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.size(6.dp))
+                Text(text(language, "Paylaş", "Share", "Partager", "Compartir", "分享", "साझा करें", "Поделиться", "مشاركة", de = "Teilen", ja = "共有", pt = "Compartilhar", id = "Bagikan"))
+            }
+        }
+    }
+}
+
+private fun gallerySummaryText(
+    language: AppLanguage,
+    activeCount: Int,
+    completedCount: Int,
+    minDay: Int?,
+    maxDay: Int?
+): String {
+    if (activeCount == 0) {
+        return text(
+            language,
+            "Aktif test uygulaması yok. $completedCount uygulama tamamlandı.",
+            "No active test apps. $completedCount apps completed.",
+            "Aucune app de test active. $completedCount apps terminées.",
+            "No hay apps de prueba activas. $completedCount apps completadas.",
+            "没有活跃测试应用。$completedCount 个应用已完成。",
+            "कोई सक्रिय टेस्ट ऐप नहीं। $completedCount ऐप पूरे हुए।",
+            "Нет активных тестовых приложений. Завершено: $completedCount.",
+            "لا توجد تطبيقات اختبار نشطة. اكتمل $completedCount تطبيق.",
+            de = "Keine aktiven Test-Apps. $completedCount Apps abgeschlossen.",
+            ja = "アクティブなテストアプリはありません。$completedCount 個のアプリが完了しました。",
+            pt = "Nenhum app de teste ativo. $completedCount apps concluídos.",
+            id = "Tidak ada aplikasi tes aktif. $completedCount aplikasi selesai."
         )
     }
+    val range = if (minDay != null && maxDay != null && minDay != maxDay) {
+        "$minDay-$maxDay"
+    } else {
+        "${minDay ?: maxDay ?: 1}"
+    }
+    return text(
+        language,
+        "$activeCount uygulama test edilmekte. Bazıları $range. gün aralığında, $completedCount uygulama tamamlandı.",
+        "$activeCount apps are being tested. Some are around day $range, $completedCount apps completed.",
+        "$activeCount apps sont en test. Certaines sont autour des jours $range, $completedCount apps terminées.",
+        "$activeCount apps están en prueba. Algunas están entre los días $range, $completedCount apps completadas.",
+        "$activeCount 个应用正在测试。部分处于第 $range 天，$completedCount 个已完成。",
+        "$activeCount ऐप टेस्ट में हैं। कुछ दिन $range के आसपास हैं, $completedCount ऐप पूरे हुए।",
+        "Тестируется приложений: $activeCount. Некоторые на днях $range, завершено: $completedCount.",
+        "يتم اختبار $activeCount تطبيق. بعضها حول اليوم $range، واكتمل $completedCount تطبيق.",
+        de = "$activeCount Apps werden getestet. Einige liegen bei Tag $range, $completedCount Apps sind abgeschlossen.",
+        ja = "$activeCount 個のアプリをテスト中です。一部は $range 日目付近、$completedCount 個が完了しました。",
+        pt = "$activeCount apps estão em teste. Alguns estão por volta do dia $range, $completedCount apps concluídos.",
+        id = "$activeCount aplikasi sedang diuji. Beberapa sekitar hari $range, $completedCount aplikasi selesai."
+    )
+}
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
-        containerColor = canvasColor(),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        scrimColor = Color.Black.copy(alpha = 0.48f),
-        dragHandle = {
-            Box(
-                Modifier
-                    .padding(top = 10.dp, bottom = 4.dp)
-                    .size(width = 54.dp, height = 5.dp)
-                    .clip(RoundedCornerShape(99.dp))
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.22f else 0.16f))
-            )
+@Composable
+private fun GridPlaceholderIcon(modifier: Modifier = Modifier) {
+    ComposeCanvas(modifier = modifier) {
+        drawRoundRect(
+            color = Color(0xFF111111),
+            size = size,
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(18.dp.toPx(), 18.dp.toPx())
+        )
+        val road = androidx.compose.ui.graphics.Path().apply {
+            moveTo(size.width * 0.12f, size.height)
+            cubicTo(size.width * 0.30f, size.height * 0.72f, size.width * 0.42f, size.height * 0.58f, size.width * 0.48f, size.height * 0.36f)
+            cubicTo(size.width * 0.54f, size.height * 0.18f, size.width * 0.70f, size.height * 0.12f, size.width * 0.84f, size.height * 0.08f)
+            lineTo(size.width, size.height)
+            close()
         }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(text(language, "Uygulama özetleri", "App summaries"), fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        text(language, "Tüm takip edilen uygulamalar ve seri günleri", "All tracked apps and streak days"),
-                        color = secondaryTextColor()
-                    )
-                }
-                Surface(
-                    color = rowSurfaceColor(),
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(1.dp, separatorColor()),
-                    modifier = Modifier.clickable(onClick = onDismiss)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = text(language, "Kapat", "Close", "Fermer", "Cerrar", "关闭", "बंद करें", "Закрыть"),
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp).size(18.dp)
-                    )
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SummaryStatChip(text(language, "Aktif", "Active", "Actif", "Activo", "活跃", "सक्रिय", "Активные", "نشط"), activeCount.toString(), Modifier.weight(1f))
-                SummaryStatChip(text(language, "Tamam", "Done", "Terminé", "Listo", "完成", "पूर्ण", "Готово", "تم"), completedCount.toString(), Modifier.weight(1f))
-                SummaryStatChip(text(language, "Arşiv", "Archive"), archivedCount.toString(), Modifier.weight(1f))
-            }
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text(text(language, "Ara", "Search", "Rechercher", "Buscar", "搜索", "खोजें", "Поиск")) },
-                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    focusedLabelColor = secondaryTextColor(),
-                    unfocusedLabelColor = secondaryTextColor(),
-                    focusedLeadingIconColor = MaterialTheme.colorScheme.onSurface,
-                    unfocusedLeadingIconColor = secondaryTextColor(),
-                    cursorColor = MaterialTheme.colorScheme.onSurface,
-                    focusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.26f else 0.18f),
-                    unfocusedBorderColor = separatorColor(),
-                    focusedContainerColor = rowSurfaceColor(),
-                    unfocusedContainerColor = rowSurfaceColor()
-                )
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SortChip(text(language, "Tümü", "All"), filter == OverviewFilter.ALL) { filter = OverviewFilter.ALL }
-                SortChip(text(language, "Aktif", "Active", "Actif", "Activo", "活跃", "सक्रिय", "Активные", "نشط"), filter == OverviewFilter.ACTIVE) { filter = OverviewFilter.ACTIVE }
-                SortChip(text(language, "Tamam", "Done", "Terminé", "Listo", "完成", "पूर्ण", "Готово", "تم"), filter == OverviewFilter.COMPLETED) { filter = OverviewFilter.COMPLETED }
-                SortChip(text(language, "Arşiv", "Archive"), filter == OverviewFilter.ARCHIVED) { filter = OverviewFilter.ARCHIVED }
-            }
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = rowSurfaceColor(), contentColor = MaterialTheme.colorScheme.onSurface),
-                border = BorderStroke(1.dp, separatorColor()),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                if (tracked.isEmpty()) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(text(language, "Henüz uygulama eklenmedi", "No apps added yet"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(text(language, "Özet ekranı, takip edilen uygulamalar eklenince dolacak.", "The summary screen fills up after apps are tracked."), color = secondaryTextColor())
-                    }
-                } else if (filteredTracked.isEmpty()) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(text(language, "Sonuç yok", "No results", "Aucun résultat", "Sin resultados", "无结果", "कोई परिणाम नहीं", "Нет результатов"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            text(language, "Aramayı değiştir ya da filtreyi genişlet.", "Change the search or widen the filter."),
-                            color = secondaryTextColor()
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 420.dp),
-                        contentPadding = PaddingValues(vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        items(
-                            items = filteredTracked,
-                            key = { it.packageName }
-                        ) { item ->
-                            val day = SeriesCalculator.currentDay(item)
-                            val today = if (usageAccess) todayUsageMap[item.packageName] ?: 0L else 0L
-                            val publisher = playPublishers[item.packageName]
-                            val installedApp = installedAppsByPackage[item.packageName]
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onSelect(item.packageName) }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                if (installedApp != null) {
-                                    Image(
-                                        bitmap = installedApp.icon.asImageBitmap(),
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(42.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(42.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(if (item.isArchived) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDarkScheme()) 0.08f else 0.045f))
-                                    )
-                                }
-                                Spacer(Modifier.size(12.dp))
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text(
-                                        item.appLabel,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 16.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                    text = buildString {
-                        append(
-                            when {
-                                item.isArchived -> text(language, "Arşiv", "Archive")
-                                item.completedAtMillis != null -> text(language, "Tamam", "Done", "Terminé", "Listo", "完成", "पूर्ण", "Готово", "تم")
-                                else -> "$day/14"
-                            }
-                        )
-                        if (usageAccess) append("  •  ").append(today).append(" ").append(minuteLabel(language))
-                        if (!publisher.isNullOrBlank()) append("  •  ").append(publisher)
-                    },
-                                        color = secondaryTextColor(),
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-            Surface(
-                color = when {
-                    item.isArchived -> rowSurfaceColor()
-                    item.completedAtMillis != null -> rowSurfaceColor()
-                    else -> rowSurfaceColor()
-                },
-                                    contentColor = MaterialTheme.colorScheme.onSurface,
-                                    shape = RoundedCornerShape(16.dp),
-                                    border = BorderStroke(1.dp, separatorColor())
-                                ) {
-                                    Text(
-                                        text = when {
-                                            item.isArchived -> text(language, "Arşiv", "Archive")
-                                            item.completedAtMillis != null -> text(language, "Tamam", "Done", "Terminé", "Listo", "完成", "पूर्ण", "Готово", "تم")
-                                            else -> "$day/14"
-                                        },
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                            }
-                            CanvasDivider(Modifier.padding(start = 66.dp, end = 12.dp))
-                        }
-                    }
-                }
-            }
-        }
+        drawPath(road, Color.White)
+        val lineColor = Color(0xFF111111)
+        drawLine(lineColor, Offset(size.width * 0.48f, size.height * 0.92f), Offset(size.width * 0.52f, size.height * 0.78f), strokeWidth = 2.2.dp.toPx())
+        drawLine(lineColor, Offset(size.width * 0.54f, size.height * 0.68f), Offset(size.width * 0.57f, size.height * 0.56f), strokeWidth = 2.dp.toPx())
+        drawLine(lineColor, Offset(size.width * 0.60f, size.height * 0.46f), Offset(size.width * 0.64f, size.height * 0.36f), strokeWidth = 1.8.dp.toPx())
+        drawCircle(Color.White, radius = size.minDimension * 0.09f, center = Offset(size.width * 0.73f, size.height * 0.20f))
+        drawCircle(Color(0xFF111111), radius = size.minDimension * 0.045f, center = Offset(size.width * 0.73f, size.height * 0.20f))
     }
 }
 
@@ -4453,8 +6061,14 @@ private fun LanguagePickerSheet(
                 )
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LanguageMode.entries.forEach { item ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 430.dp),
+                contentPadding = PaddingValues(bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(LanguageMode.entries.toList()) { item ->
                     LanguageOptionRow(
                         language = language,
                         mode = item,
@@ -4527,8 +6141,27 @@ private fun LanguageOptionRow(
     }
 }
 
+private fun drawableToBitmap(drawable: Drawable): Bitmap {
+    if (drawable is android.graphics.drawable.BitmapDrawable) {
+        drawable.bitmap?.let { return it }
+    }
+    val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 96
+    val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 96
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    return bitmap
+}
+
 @Composable
 private fun TestAdAreaCard(language: AppLanguage) {
+    var bannerState by remember {
+        mutableStateOf(
+            text(language, "Reklam yükleniyor", "Loading ad", "Chargement de la publicité", "Cargando anuncio", "正在加载广告", "विज्ञापन लोड हो रहा है", "Загрузка рекламы", "يتم تحميل الإعلان", de = "Anzeige wird geladen", ja = "広告を読み込み中", pt = "Carregando anúncio", id = "Memuat iklan")
+        )
+    }
+    var bannerLoaded by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(26.dp),
@@ -4542,19 +6175,185 @@ private fun TestAdAreaCard(language: AppLanguage) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text(language, "Test reklam alanı", "Test ad area", "Zone pub test", "Área de anuncio de prueba", "测试广告区域", "टेस्ट विज्ञापन क्षेत्र", "Тестовая рекламная зона", "منطقة إعلان تجريبية"),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp
-            )
-            Text(
-                text(language, "Bu alan reklam testleri için ayrıldı.", "This area is reserved for ad tests.", "Cette zone est réservée aux tests publicitaires.", "Esta área está reservada para pruebas de anuncios.", "该区域用于广告测试。", "यह क्षेत्र विज्ञापन परीक्षणों के लिए आरक्षित है।", "Эта область предназначена для тестов рекламы.", "هذه المنطقة مخصصة لاختبارات الإعلانات."),
-                color = secondaryTextColor(),
-                fontSize = 12.sp
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!bannerLoaded) {
+                    Text(
+                        bannerState,
+                        color = secondaryTextColor(),
+                        fontSize = 11.sp
+                    )
+                }
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    factory = { ctx ->
+                        AdView(ctx).apply {
+                            setAdSize(AdSize.BANNER)
+                            adUnitId = if (isDebuggableApp(ctx)) BANNER_TEST_AD_UNIT_ID else BANNER_PROD_AD_UNIT_ID
+                            adListener = object : AdListener() {
+                                override fun onAdLoaded() {
+                                    bannerLoaded = true
+                                    Log.d("ClosedTestAds", "Banner loaded")
+                                }
+
+                                override fun onAdFailedToLoad(error: LoadAdError) {
+                                    bannerLoaded = false
+                                    bannerState = adLoadMessage(language, error)
+                                    Log.w("ClosedTestAds", "Banner failed: code=${error.code}, domain=${error.domain}, message=${error.message}")
+                                }
+                            }
+                            loadAd(AdRequest.Builder().build())
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HowToScreen(
+    modifier: Modifier = Modifier,
+    language: AppLanguage,
+    onContinue: () -> Unit
+) {
+    Box(modifier = modifier) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item {
+                Text(
+                    text(language, "Uygulamayı ilk açtığınızda", "When you open the app for the first time", "Lorsque vous ouvrez l'application pour la première fois", "Cuando abras la app por primera vez", "首次打开应用时", "जब आप ऐप पहली बार खोलें", "При первом запуске приложения", "عند فتح التطبيق لأول مرة"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp
+                )
+                Text(
+                    text(language, "Kullanım süresi iznini telefon ayarlarından açın. Bu izin, günlük sürelerin takip edilmesi için gereklidir.", "Enable Usage Access from phone settings. This permission is required to track daily usage times.", "Activez l'accès d'utilisation dans les paramètres du téléphone. Cette autorisation est requise pour suivre les durées quotidiennes.", "Activa el acceso de uso desde la configuración del teléfono. Este permiso es necesario para seguir los tiempos diarios.", "请在手机设置中开启使用情况访问权限。此权限用于跟踪每日使用时长。", "फोन सेटिंग्स से Usage Access अनुमति चालू करें। यह दैनिक समय ट्रैकिंग के लिए आवश्यक है।", "Включите доступ к статистике в настройках телефона. Это нужно для отслеживания ежедневного времени.", "فعّل إذن الوصول للاستخدام من إعدادات الهاتف. هذا الإذن مطلوب لتتبع الوقت اليومي."),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 15.sp
+                )
+            }
+            item {
+                Image(
+                    painter = painterResource(id = R.drawable.guide_step_1),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(10.dp, RoundedCornerShape(14.dp), clip = false)
+                        .clip(RoundedCornerShape(14.dp)),
+                    contentScale = ContentScale.FillWidth
+                )
+            }
+            item {
+                Text(
+                    text(language, "Sonrasında", "After that", "Ensuite", "Después", "然后", "इसके बाद", "Далее", "بعد ذلك"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 19.sp
+                )
+                Text(
+                    text(language, "Yukarıdaki + ikonu ile uygulama ekleyin. Teste daha önce başladıysanız gün seçerek mevcut süreci devam ettirebilirsiniz.", "Add apps using the + icon at the top. If you already started testing before, set the current day and continue.", "Ajoutez des apps avec l'icône + en haut. Si vous avez déjà commencé le test, définissez le jour actuel et continuez.", "Agrega apps con el ícono + arriba. Si ya empezaste la prueba antes, define el día actual y continúa.", "使用顶部 + 图标添加应用。如果之前已开始测试，可设置当前天数继续。", "ऊपर + आइकन से ऐप जोड़ें। यदि पहले से टेस्ट शुरू है तो वर्तमान दिन सेट करके जारी रखें।", "Добавьте приложения через значок + сверху. Если тест уже начат, задайте текущий день и продолжайте.", "أضف التطبيقات من أيقونة + بالأعلى. إذا بدأت الاختبار مسبقاً يمكنك تحديد اليوم الحالي والمتابعة."),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 15.sp
+                )
+            }
+            item {
+                Image(
+                    painter = painterResource(id = R.drawable.guide_step_2),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(10.dp, RoundedCornerShape(14.dp), clip = false)
+                        .clip(RoundedCornerShape(14.dp)),
+                    contentScale = ContentScale.FillWidth
+                )
+            }
+            item {
+                Image(
+                    painter = painterResource(id = R.drawable.guide_step_3),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(10.dp, RoundedCornerShape(14.dp), clip = false)
+                        .clip(RoundedCornerShape(14.dp)),
+                    contentScale = ContentScale.FillWidth
+                )
+            }
+            item {
+                Text(
+                    text(language, "Gün sayısını seçtikten sonra", "After selecting the day", "Après avoir sélectionné le jour", "Después de seleccionar el día", "选择天数后", "दिन चुनने के बाद", "После выбора дня", "بعد تحديد اليوم"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 19.sp
+                )
+                Text(
+                    text(language, "Takip başlar. Uygulama özetinde ve listede seri gününü ve kullanım dakikalarını görebilirsiniz. İkona dokunarak uygulamayı direkt açabilirsiniz.", "Tracking starts. You can see streak day and usage minutes in both summary and list. Tap the icon to open the app directly.", "Le suivi commence. Vous voyez le jour de série et les minutes d'utilisation dans le résumé et la liste. Touchez l'icône pour ouvrir l'app.", "Empieza el seguimiento. Puedes ver el día de racha y los minutos en resumen y lista. Toca el ícono para abrir la app.", "开始跟踪。可在摘要和列表看到连续天数与使用分钟。点击图标可直接打开应用。", "ट्रैकिंग शुरू होती है। सारांश और सूची में स्ट्रीक दिन व मिनट दिखेंगे। आइकन टैप कर ऐप सीधे खोलें।", "Отслеживание начнется. День серии и минуты видны в сводке и списке. Нажмите иконку, чтобы открыть приложение.", "يبدأ التتبع. سترى يوم السلسلة ودقائق الاستخدام في الملخص والقائمة. اضغط الأيقونة لفتح التطبيق مباشرة."),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 15.sp
+                )
+            }
+            item {
+                Image(
+                    painter = painterResource(id = R.drawable.guide_step_4),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(10.dp, RoundedCornerShape(14.dp), clip = false)
+                        .clip(RoundedCornerShape(14.dp)),
+                    contentScale = ContentScale.FillWidth
+                )
+            }
+        }
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            color = canvasColor().copy(alpha = 0.94f),
+            shape = RoundedCornerShape(26.dp),
+            border = BorderStroke(1.dp, separatorColor()),
+            shadowElevation = 12.dp
+        ) {
+            Button(
+                onClick = onContinue,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.onSurface,
+                    contentColor = MaterialTheme.colorScheme.surface
+                )
+            ) {
+                Text(
+                    text(
+                        language,
+                        "Uygulamaya geç",
+                        "Continue to app",
+                        "Continuer vers l'app",
+                        "Ir a la app",
+                        "进入应用",
+                        "ऐप पर जाएँ",
+                        "Перейти к приложению",
+                        "الانتقال إلى التطبيق",
+                        de = "Zur App",
+                        ja = "アプリへ進む",
+                        pt = "Ir para o app",
+                        id = "Lanjut ke aplikasi"
+                    ),
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -4570,6 +6369,10 @@ private fun languageModeFlag(mode: LanguageMode): String {
         LanguageMode.HI -> languageFlag(AppLanguage.HI)
         LanguageMode.RU -> languageFlag(AppLanguage.RU)
         LanguageMode.AR -> languageFlag(AppLanguage.AR)
+        LanguageMode.DE -> languageFlag(AppLanguage.DE)
+        LanguageMode.JA -> languageFlag(AppLanguage.JA)
+        LanguageMode.PT -> languageFlag(AppLanguage.PT)
+        LanguageMode.ID -> languageFlag(AppLanguage.ID)
     }
 }
 
@@ -4648,26 +6451,15 @@ private fun SettingsDialog(
                                 ThemeChip("${languageFlag(AppLanguage.RU)} Русский", language == AppLanguage.RU) { onLanguageChange(AppLanguage.RU) }
                                 ThemeChip("${languageFlag(AppLanguage.AR)} العربية", language == AppLanguage.AR) { onLanguageChange(AppLanguage.AR) }
                             }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ThemeChip("${languageFlag(AppLanguage.DE)} Deutsch", language == AppLanguage.DE) { onLanguageChange(AppLanguage.DE) }
+                                ThemeChip("${languageFlag(AppLanguage.JA)} 日本語", language == AppLanguage.JA) { onLanguageChange(AppLanguage.JA) }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ThemeChip("${languageFlag(AppLanguage.PT)} Português", language == AppLanguage.PT) { onLanguageChange(AppLanguage.PT) }
+                                ThemeChip("${languageFlag(AppLanguage.ID)} Indonesia", language == AppLanguage.ID) { onLanguageChange(AppLanguage.ID) }
+                            }
                         }
-                    }
-                }
-                item {
-                    SettingsSection(
-                    icon = { Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null) },
-                        title = text(language, "Yardım", "Help")
-                    ) {
-                        Text(
-                            text(
-                                language,
-                                "Uygulama seç, test gününü gir ve kullanım erişimi izniyle gün gün süreleri takip et. Kart ikonuna dokunarak ilgili uygulamayı açabilirsin.",
-                                "Pick apps, enter the current test day, and track daily minutes with Usage Access. Tap an app icon to open that app.",
-                                "Choisis des applications, saisis le jour de test actuel et suis les minutes quotidiennes avec l'accès à l'utilisation. Appuie sur l'icône d'une application pour l'ouvrir.",
-                                "Elige apps, introduce el día actual de prueba y sigue los minutos diarios con Acceso de uso. Toca el icono de una app para abrirla.",
-                                "选择应用，输入当前测试日，并通过使用情况访问跟踪每日分钟数。点按应用图标即可打开应用。",
-                                "ऐप चुनें, वर्तमान टेस्ट दिन दर्ज करें, और Usage Access से रोज़ाना मिनट ट्रैक करें। ऐप खोलने के लिए उसके आइकन पर टैप करें।",
-                                "Выберите приложения, укажите текущий день теста и отслеживайте ежедневные минуты через доступ к статистике использования. Коснитесь значка приложения, чтобы открыть его."
-                            )
-                        )
                     }
                 }
                 item {
@@ -5021,7 +6813,12 @@ private fun AppPickerDialog(
                             Spacer(Modifier.size(8.dp))
                             Column {
                                 Text(app.label, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(app.packageName, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    text = text(language, "Uygulama seçmek için dokun", "Tap to choose"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -5161,7 +6958,7 @@ private fun rememberUsageSummaryAsync(
                 emptyMap()
             }
             val eventMinutesByStart = if (usageAccess && currentDay > 0) {
-                UsageReader.usageMinutesByDayMapFromEvents(
+                UsageReader.usageMinutesByDayMapFromEventsForDisplay(
                     context = context,
                     packageName = item.packageName,
                     startMillis = seriesStart,

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Kapalı Test Takibi</string>
+    <string name="widget_app_icon_description">Test uygulaması</string>
+    <string name="widget_description">Kapalı test serisi özeti</string>
+    <string name="widget_title_default">Kapalı Test</string>
+    <string name="widget_subtitle_default">0 aktif - 0 tamamlandı</string>
+    <string name="widget_streak_complete">Seri tamamlandı</string>
+    <string name="widget_missing_tests">%1$d test kaldı</string>
+    <string name="widget_summary">%1$d aktif - %2$d tamamlandı</string>
+    <string name="live_usage_overlay_text">%1$s\n%2$d dk</string>
+</resources>

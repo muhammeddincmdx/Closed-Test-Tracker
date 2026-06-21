@@ -1,9 +1,24 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
+
+// Signing credentials are kept out of version control. They are read from
+// keystore.properties (git-ignored) or, as a fallback, environment variables.
+// See keystore.properties.example for the expected keys.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+fun signingSecret(propertyKey: String, envKey: String): String? =
+    keystoreProperties.getProperty(propertyKey) ?: System.getenv(envKey)
 
 android {
     namespace = "com.mdstudio.closedtesttracker"
@@ -13,8 +28,9 @@ android {
         applicationId = "com.mdstudio.closedtesttracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.0.19.5"
+        versionCode = 17
+        versionName = "0.0.21.6"
+        buildConfigField("boolean", "PRO_PREVIEW", providers.gradleProperty("proPreview").orNull ?: "false")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -25,19 +41,45 @@ android {
     signingConfigs {
         create("release") {
             val keystoreFile = rootProject.file("release-keystore.jks")
-            if (keystoreFile.exists()) {
+            val storePw = signingSecret("storePassword", "CTT_STORE_PASSWORD")
+            val keyAliasValue = signingSecret("keyAlias", "CTT_KEY_ALIAS")
+            val keyPw = signingSecret("keyPassword", "CTT_KEY_PASSWORD")
+            if (keystoreFile.exists() && storePw != null && keyAliasValue != null && keyPw != null) {
                 storeFile = keystoreFile
-                storePassword = "testerapp"
-                keyAlias = "testerapp"
-                keyPassword = "testerapp"
+                storePassword = storePw
+                keyAlias = keyAliasValue
+                keyPassword = keyPw
             }
         }
     }
 
     buildTypes {
-        release {
+        debug {
+            applicationIdSuffix = ".debug"
+            resValue("string", "app_name", "Debug")
+        }
+        create("preview") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("boolean", "PRO_PREVIEW", "true")
+            resValue("string", "app_name", "Closed Test Tracker Pro Preview")
+            matchingFallbacks += listOf("release")
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Fall back to debug signing only when no release credentials are
+            // configured, so the release variant always builds locally.
+            val releaseSigning = signingConfigs.getByName("release")
+            signingConfig = if (releaseSigning.storeFile != null) {
+                releaseSigning
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -53,6 +95,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -84,6 +127,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.google.android.play:app-update:2.1.0")
+    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.google.android.gms:play-services-ads:23.5.0")
+
+    testImplementation("junit:junit:4.13.2")
 }
-
-

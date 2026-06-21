@@ -3,18 +3,31 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:name=".TesterApp"
         android:allowBackup="true"
-        android:icon="@drawable/closed_test_tracker"
+        android:icon="@mipmap/closed_test_tracker"
         android:label="@string/app_name"
-        android:roundIcon="@drawable/closed_test_tracker"
+        android:roundIcon="@mipmap/closed_test_tracker"
         android:supportsRtl="true"
         android:theme="@style/Theme.TesterApp">
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-5011839648327891~4724079763" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -34,6 +47,31 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/closed_test_widget" />
         </receiver>
+
+        <service
+            android:name=".WidgetAppGridService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

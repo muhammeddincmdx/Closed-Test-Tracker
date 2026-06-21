@@ -15,20 +15,22 @@
         android:ellipsize="end"
         android:fontFamily="sans"
         android:maxLines="1"
-        android:text="Closed Test"
+        android:text="@string/widget_title_default"
         android:textColor="#FFFFFFFF"
-        android:textSize="18sp"
+        android:textSize="15sp"
         android:textStyle="bold" />
 
-    <TextView
-        android:id="@+id/widgetSubtitle"
+    <GridView
+        android:id="@+id/widgetAppGrid"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:text="0 aktif • 0 tamam"
-        android:textColor="#B8FFFFFF"
-        android:textSize="13sp" />
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1"
+        android:columnWidth="64dp"
+        android:gravity="center"
+        android:horizontalSpacing="2dp"
+        android:numColumns="auto_fit"
+        android:stretchMode="columnWidth"
+        android:verticalSpacing="2dp" />
 
 </LinearLayout>
