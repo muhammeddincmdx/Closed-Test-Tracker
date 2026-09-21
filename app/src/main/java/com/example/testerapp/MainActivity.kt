@@ -1708,6 +1708,9 @@ class MainActivity : ComponentActivity() {
         }
         setTheme(if (darkTheme) R.style.Theme_TesterApp_Dark else R.style.Theme_TesterApp_Light)
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) {
+            InAppReviewHelper.recordLaunch(this)
+        }
         enableEdgeToEdge()
 
         setContent {
@@ -2651,6 +2654,16 @@ fun MainScreen(
             tracked = it
             trackedLoaded = true
         }
+    }
+    LaunchedEffect(trackedLoaded) {
+        if (!trackedLoaded) return@LaunchedEffect
+        // Let the user settle in before the (rarely shown) Play review sheet.
+        delay(8_000)
+        val activity = context as? android.app.Activity ?: return@LaunchedEffect
+        InAppReviewHelper.maybeRequestReview(
+            activity,
+            hasActiveTracking = tracked.any { !it.isArchived && it.completedAtMillis == null }
+        )
     }
     LaunchedEffect(isPro) {
         if (!isPro) MobileAds.initialize(context) {}
