@@ -41,6 +41,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -99,7 +101,6 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Help
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
@@ -146,6 +147,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -207,6 +209,10 @@ private const val PREFS_NAME = "tester_settings"
 private const val KEY_LANGUAGE = "language"
 private const val KEY_THEME = "theme"
 private const val KEY_THEME_MODE = "theme_mode"
+private const val KEY_BACKGROUND_STYLE = "background_style"
+private const val KEY_GRADIENT_START = "gradient_start_color"
+private const val KEY_GRADIENT_END = "gradient_end_color"
+private const val KEY_GRADIENT_TYPE = "gradient_type"
 private const val KEY_DATE_FORMAT = "date_format"
 private const val KEY_AUTO_TOUR = "auto_tour"
 private const val KEY_REMINDER_HOUR = "reminder_hour"
@@ -220,11 +226,16 @@ private const val KEY_HOME_LIST_INDEX = "home_list_index"
 private const val KEY_HOME_LIST_OFFSET = "home_list_offset"
 private const val KEY_USAGE_TODAY_CACHE_PREFIX = "usage_today_cache_"
 private const val KEY_USAGE_TOTAL_CACHE_PREFIX = "usage_total_cache_"
+private const val KEY_LAST_SEEN_VERSION_NAME = "last_seen_version_name"
+private const val KEY_DEBUG_MODE_ENABLED = "debug_mode_enabled"
 private const val LAST_SCREEN_RESTORE_TIMEOUT_MILLIS = 10L * 60L * 1000L
 private const val USAGE_REFRESH_MIN_INTERVAL_MILLIS = 60L * 1000L
 private const val USAGE_IDLE_REFRESH_INTERVAL_MILLIS = 2L * 60L * 1000L
 private const val KEY_LIVE_USAGE_OVERLAY = "live_usage_overlay"
 private const val BANNER_TEST_AD_UNIT_ID = "ca-app-pub-3940256099942544/6300978111"
+// TEMPORARY PRO UNLOCK: unlocks all Pro/premium features so they are visible
+// without a purchase. Set back to false to restore normal Pro gating.
+private const val TEMP_PRO_UNLOCK = false
 private const val BANNER_PROD_AD_UNIT_ID = "ca-app-pub-5011839648327891/4443133880"
 private const val REWARDED_TEST_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
 private const val REWARDED_PROD_AD_UNIT_ID = "ca-app-pub-5011839648327891/1816970548"
@@ -260,35 +271,35 @@ private fun writeUsageCache(
 
 private fun appColors(theme: AppTheme, dark: Boolean) = if (dark) {
     darkColorScheme(
-        primary = Color(0xFFFFFFFF),
-        secondary = Color(0xFFB7B7B7),
-        tertiary = Color(0xFFE6D1B0),
-        background = Color.Black,
-        surface = Color(0xFF1C1C1E),
-        surfaceVariant = Color(0xFF2C2C2E),
-        onPrimary = Color.Black,
-        onSecondary = Color(0xFF111111),
-        onTertiary = Color(0xFF24190B),
-        onBackground = Color(0xFFF5F5F7),
-        onSurface = Color(0xFFF5F5F7),
-        onSurfaceVariant = Color(0xFFB8B8BE),
-        outline = Color(0xFF3A3A3C)
+        primary = Color(0xFF9EDDE7),
+        secondary = Color(0xFFE2C89A),
+        tertiary = Color(0xFFB5D1C5),
+        background = Color(0xFF090B0D),
+        surface = Color(0xFF171B1E),
+        surfaceVariant = Color(0xFF263036),
+        onPrimary = Color(0xFF06292F),
+        onSecondary = Color(0xFF2B1B08),
+        onTertiary = Color(0xFF0E2A21),
+        onBackground = Color(0xFFF6F4EE),
+        onSurface = Color(0xFFF6F4EE),
+        onSurfaceVariant = Color(0xFFC8D0CD),
+        outline = Color(0xFF425057)
     )
 } else {
     lightColorScheme(
-        primary = Color(0xFF111111),
-        secondary = Color(0xFF696969),
-        tertiary = Color(0xFF9B7B55),
-        background = Color(0xFFF7F7F5),
-        surface = Color.White,
-        surfaceVariant = Color(0xFFE9E9E6),
+        primary = Color(0xFF0F5966),
+        secondary = Color(0xFF956A24),
+        tertiary = Color(0xFF3F7568),
+        background = Color(0xFFF7F3EA),
+        surface = Color(0xFFFFFCF5),
+        surfaceVariant = Color(0xFFE8EEE9),
         onPrimary = Color.White,
         onSecondary = Color.White,
         onTertiary = Color.White,
-        onBackground = Color(0xFF141414),
-        onSurface = Color(0xFF141414),
-        onSurfaceVariant = Color(0xFF606064),
-        outline = Color(0xFFD5D5D2)
+        onBackground = Color(0xFF182023),
+        onSurface = Color(0xFF182023),
+        onSurfaceVariant = Color(0xFF5D6868),
+        outline = Color(0xFFD0D8D1)
     )
 }
 
@@ -303,11 +314,18 @@ private fun backgroundBrush(theme: AppTheme, dark: Boolean) = if (dark) {
 } else {
     Brush.verticalGradient(
         listOf(
-            Color(0xFFFCFCFA),
-            Color(0xFFF6F6F4),
-            Color(0xFFF0F0ED)
+            Color(0xFFFFFCF4),
+            Color(0xFFF4F0E7),
+            Color(0xFFEAF0EB)
         )
     )
+}
+
+private fun gradientBrush(colors: List<Color>, type: GradientType): Brush = when (type) {
+    GradientType.VERTICAL -> Brush.verticalGradient(colors)
+    GradientType.HORIZONTAL -> Brush.horizontalGradient(colors)
+    GradientType.DIAGONAL -> Brush.linearGradient(colors)
+    GradientType.RADIAL -> Brush.radialGradient(colors)
 }
 
 @Composable
@@ -315,6 +333,8 @@ private fun FluidBackdrop(
     modifier: Modifier = Modifier,
     appTheme: AppTheme,
     darkTheme: Boolean,
+    appBackground: AppBackground = AppBackground.SIMPLE,
+    customGradient: CustomGradient = CustomGradient(),
     content: @Composable () -> Unit
 ) {
     val transition = rememberInfiniteTransition(label = "fluid_backdrop")
@@ -346,12 +366,30 @@ private fun FluidBackdrop(
         label = "pulse"
     )
     val accents = accentGradient(appTheme)
+    val baseBrush = when (appBackground) {
+        AppBackground.SIMPLE -> backgroundBrush(appTheme, darkTheme)
+        AppBackground.RICH -> gradientBrush(
+            if (darkTheme) {
+                listOf(Color(0xFF070A0B), Color(0xFF17292E), Color(0xFF2F271B), Color(0xFF0B1113))
+            } else {
+                listOf(Color(0xFFFFFBF1), Color(0xFFEAF4EF), Color(0xFFF3E3BD), Color(0xFFFFFCF8))
+            },
+            GradientType.DIAGONAL
+        )
+        AppBackground.CUSTOM -> gradientBrush(
+            listOf(Color(customGradient.startColor), Color(customGradient.endColor)),
+            customGradient.type
+        )
+    }
+    val showFluidBlobs = appBackground == AppBackground.SIMPLE
+    val showPremiumBlobs = appBackground == AppBackground.RICH
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(backgroundBrush(appTheme, darkTheme))
+            .background(baseBrush)
     ) {
+        if (showFluidBlobs) {
         FluidBlob(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -401,6 +439,46 @@ private fun FluidBackdrop(
                     )
                 )
         )
+        }
+        if (showPremiumBlobs) {
+            FluidBlob(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .graphicsLayer {
+                        translationX = -driftA * 0.65f
+                        translationY = driftB * 0.50f
+                        scaleX = 0.92f + (pulse - 0.76f) * 0.60f
+                        scaleY = 0.92f + (pulse - 0.76f) * 0.60f
+                    },
+                color = if (darkTheme) Color(0xFF9EDDE7) else Color(0xFF89C7B6),
+                size = 360
+            )
+            FluidBlob(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .graphicsLayer {
+                        translationX = driftB * 0.70f
+                        translationY = -driftA * 0.55f
+                        scaleX = 1.02f + (pulse - 0.76f) * 0.50f
+                        scaleY = 1.02f + (pulse - 0.76f) * 0.50f
+                    },
+                color = if (darkTheme) Color(0xFFE2C89A) else Color(0xFFE5B767),
+                size = 390
+            )
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.White.copy(alpha = if (darkTheme) 0.03f else 0.20f),
+                                Color.Transparent,
+                                Color.Black.copy(alpha = if (darkTheme) 0.22f else 0.00f)
+                            )
+                        )
+                    )
+            )
+        }
         content()
     }
 }
@@ -429,10 +507,10 @@ private fun glassColor(strong: Boolean = false): Color {
     val dark = isDarkScheme()
     val base = MaterialTheme.colorScheme.surface
     val alpha = when {
-        dark && strong -> 0.92f
-        dark -> 0.82f
-        strong -> 0.92f
-        else -> 0.86f
+        dark && strong -> 0.94f
+        dark -> 0.86f
+        strong -> 0.95f
+        else -> 0.90f
     }
     return base.copy(alpha = alpha)
 }
@@ -477,9 +555,9 @@ private fun glassPanelBrush(): Brush {
     val dark = isDarkScheme()
     return Brush.linearGradient(
         listOf(
-            MaterialTheme.colorScheme.surface.copy(alpha = if (dark) 0.92f else 0.88f),
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (dark) 0.40f else 0.28f),
-            MaterialTheme.colorScheme.surface.copy(alpha = if (dark) 0.82f else 0.78f)
+            MaterialTheme.colorScheme.surface.copy(alpha = if (dark) 0.96f else 0.94f),
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (dark) 0.56f else 0.42f),
+            MaterialTheme.colorScheme.surface.copy(alpha = if (dark) 0.88f else 0.86f)
         )
     )
 }
@@ -550,34 +628,34 @@ private fun panelColor(strong: Boolean = false): Color {
 private fun panelBorder(): BorderStroke {
     return BorderStroke(
         1.dp,
-        if (isDarkScheme()) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.08f)
+        if (isDarkScheme()) Color.White.copy(alpha = 0.14f) else Color(0xFF6E7B72).copy(alpha = 0.16f)
     )
 }
 
 @Composable
 private fun canvasColor(): Color {
     return if (isDarkScheme()) {
-        Color(0xFF151517).copy(alpha = 0.94f)
+        Color(0xFF121719).copy(alpha = 0.96f)
     } else {
-        Color(0xFFF0F0EE).copy(alpha = 0.86f)
+        Color(0xFFF8F3EA).copy(alpha = 0.92f)
     }
 }
 
 @Composable
 private fun rowSurfaceColor(): Color {
     return if (isDarkScheme()) {
-        Color.White.copy(alpha = 0.045f)
+        Color(0xFF223039).copy(alpha = 0.76f)
     } else {
-        Color.White.copy(alpha = 0.78f)
+        Color(0xFFFFFCF5).copy(alpha = 0.92f)
     }
 }
 
 @Composable
 private fun separatorColor(): Color {
     return if (isDarkScheme()) {
-        Color.White.copy(alpha = 0.075f)
+        Color(0xFFBFE4E7).copy(alpha = 0.12f)
     } else {
-        Color.Black.copy(alpha = 0.055f)
+        Color(0xFF0F5966).copy(alpha = 0.10f)
     }
 }
 
@@ -2256,10 +2334,44 @@ fun MainScreen(
     var showProOffer by remember { mutableStateOf(false) }
     var showProHub by remember { mutableStateOf(false) }
     var showTestShare by remember { mutableStateOf(false) }
+    var showTopActions by rememberSaveable { mutableStateOf(false) }
+    var addAnotherPromptLabel by remember { mutableStateOf<String?>(null) }
+    var whatsNewVisible by remember { mutableStateOf(false) }
+    var debugModeEnabled by remember { mutableStateOf(prefs.getBoolean(KEY_DEBUG_MODE_ENABLED, false)) }
+    var settingsIconTapCount by remember { mutableIntStateOf(0) }
     val proManager = remember { ProManager(context) }
     val proBillingState by proManager.state.collectAsState()
     val proStorage = remember { ProStorage(context) }
-    val isPro = proBillingState.isPro || BuildConfig.PRO_PREVIEW
+    // TEMP_PRO_UNLOCK forces all Pro features open; flip the flag above to revert.
+    val isPro = proBillingState.isPro || BuildConfig.PRO_PREVIEW || TEMP_PRO_UNLOCK
+    var appBackground by remember {
+        mutableStateOf(
+            runCatching {
+                AppBackground.valueOf(
+                    prefs.getString(KEY_BACKGROUND_STYLE, AppBackground.SIMPLE.name) ?: AppBackground.SIMPLE.name
+                )
+            }.getOrDefault(AppBackground.SIMPLE)
+        )
+    }
+    var customGradient by remember {
+        mutableStateOf(
+            CustomGradient(
+                startColor = prefs.getLong(KEY_GRADIENT_START, CustomGradient().startColor),
+                endColor = prefs.getLong(KEY_GRADIENT_END, CustomGradient().endColor),
+                type = runCatching {
+                    GradientType.valueOf(
+                        prefs.getString(KEY_GRADIENT_TYPE, GradientType.DIAGONAL.name) ?: GradientType.DIAGONAL.name
+                    )
+                }.getOrDefault(GradientType.DIAGONAL)
+            )
+        )
+    }
+    // Rich/custom backgrounds are Pro perks; Normal remains available even for Pro users.
+    val effectiveBackground = if (isPro) {
+        appBackground
+    } else {
+        AppBackground.SIMPLE
+    }
     val restoredPackageName = remember(restoreLastScreenFromPrefs) {
         if (restoreLastScreenFromPrefs) {
             prefs.getString(KEY_LAST_SELECTED_PACKAGE, null)?.takeIf { it.isNotBlank() }
@@ -2321,6 +2433,7 @@ fun MainScreen(
             firstVisibleItemScrollOffset = if (canRestoreLastUiState) prefs.getInt(KEY_HOME_LIST_OFFSET, 0) else 0
         )
     }
+    var homePullDistance by remember { mutableStateOf(0f) }
     var apps by remember { mutableStateOf(emptyList<InstalledApp>()) }
     val playPublishers = remember { mutableStateMapOf<String, String>() }
     val playPublisherRequested = remember { mutableStateMapOf<String, Boolean>() }
@@ -2370,6 +2483,7 @@ fun MainScreen(
         AppScreen.DETAIL -> selectedItem?.appLabel ?: text(language, "Detay", "Detail", "Détail", "Detalle", "详情", "विवरण", "Детали")
         AppScreen.HOWTO -> text(language, "Nasıl kullanılır", "How to use", "Utilisation", "Cómo usar", "如何使用", "कैसे उपयोग करें", "Как использовать", "طريقة الاستخدام")
         AppScreen.GALLERY -> text(language, "Genel özet", "General summary", "Résumé général", "Resumen general", "总览摘要", "सामान्य सारांश", "Общая сводка", "الملخص العام")
+        AppScreen.DEBUG -> text(language, "Debug modu", "Debug mode", "Mode debug", "Modo debug", "调试模式", "Debug मोड", "Режим отладки", "وضع التصحيح", de = "Debug-Modus", ja = "デバッグモード", pt = "Modo debug", id = "Mode debug")
         AppScreen.HOME -> appDisplayName
     }
 
@@ -2553,6 +2667,15 @@ fun MainScreen(
     }
     LaunchedEffect(Unit) { refreshInstalledApps() }
     LaunchedEffect(Unit) { refreshPlayUpdateState() }
+    LaunchedEffect(appVersionName) {
+        val lastSeen = prefs.getString(KEY_LAST_SEEN_VERSION_NAME, null)
+        if (lastSeen == null) {
+            prefs.edit().putString(KEY_LAST_SEEN_VERSION_NAME, appVersionName).apply()
+        } else if (lastSeen != appVersionName) {
+            whatsNewVisible = true
+            prefs.edit().putString(KEY_LAST_SEEN_VERSION_NAME, appVersionName).apply()
+        }
+    }
     LaunchedEffect(isPro) {
         if (!isPro) loadSupportRewardedAd()
     }
@@ -2568,6 +2691,15 @@ fun MainScreen(
     }
     LaunchedEffect(screen, selectedPackageName) {
         persistLastUiState()
+    }
+    // The detail screen recomputes usage on every open, but the home list only
+    // refreshed on a throttled tick, so list durations could lag behind the
+    // detail view. Force a fresh usage recompute whenever the home list becomes
+    // visible so both screens stay consistent.
+    LaunchedEffect(screen) {
+        if (screen == AppScreen.HOME) {
+            requestUsageRefresh(force = true)
+        }
     }
     LaunchedEffect(homeListState) {
         snapshotFlow {
@@ -2727,16 +2859,26 @@ fun MainScreen(
         ),
         usageAccess,
         refreshTick,
-        visibleUsagePackages
+        visibleTrackedApps
     ) {
-        value = if (!usageAccess || visibleUsagePackages.isEmpty()) {
+        value = if (!usageAccess || visibleTrackedApps.isEmpty()) {
             TodayUsageState(isLoading = false)
         } else {
             if (todayUsageCache.isNotEmpty()) {
                 value = TodayUsageState(minutesByPackage = todayUsageCache, isLoading = false)
             }
             val fresh = withContext(Dispatchers.Default) {
-                UsageReader.todayUsageMinutesMap(context, visibleUsagePackages)
+                val todayStart = SeriesCalculator.dayStartMillis(0)
+                val now = System.currentTimeMillis()
+                visibleTrackedApps.associate { item ->
+                    val minutes = UsageReader.mergedUsageMinutesByDayMap(
+                        context = context,
+                        packageName = item.packageName,
+                        startMillis = todayStart,
+                        endMillis = now
+                    )[todayStart] ?: 0L
+                    item.packageName to minutes
+                }
             }
             todayUsageCache = fresh
             writeUsageCache(prefs, fresh, KEY_USAGE_TODAY_CACHE_PREFIX)
@@ -2830,7 +2972,9 @@ fun MainScreen(
     FluidBackdrop(
         modifier = Modifier.fillMaxSize(),
         appTheme = appTheme,
-        darkTheme = darkTheme
+        darkTheme = darkTheme,
+        appBackground = effectiveBackground,
+        customGradient = customGradient
     ) {
         Scaffold(
             containerColor = Color.Transparent,
@@ -2855,37 +2999,46 @@ fun MainScreen(
                                 Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null, modifier = Modifier.size(22.dp))
                             }
                             AppScreen.SETTINGS -> {
-                                Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(22.dp))
+                                Icon(
+                                    Icons.Rounded.Settings,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clickable {
+                                            settingsIconTapCount++
+                                            if (settingsIconTapCount >= 4) {
+                                                settingsIconTapCount = 0
+                                                debugModeEnabled = true
+                                                prefs.edit().putBoolean(KEY_DEBUG_MODE_ENABLED, true).apply()
+                                                screen = AppScreen.DEBUG
+                                                Toast.makeText(
+                                                    context,
+                                                    text(language, "Debug modu açıldı", "Debug mode enabled"),
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                )
                             }
                             AppScreen.GALLERY -> {
                                 GridDotsIcon(modifier = Modifier.size(22.dp))
                             }
                             AppScreen.DETAIL -> Unit
-                        }
-                        Text(
-                            topTitle,
-                            modifier = Modifier.weight(1f, fill = false),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (screen == AppScreen.HOME && isPro) {
-                            Surface(
-                                modifier = Modifier.clickable { showProHub = true },
-                                color = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                                shape = RoundedCornerShape(50)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(Icons.Rounded.Star, contentDescription = null, modifier = Modifier.size(13.dp))
-                                    Text("PRO", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
-                                }
+                            AppScreen.DEBUG -> {
+                                Icon(Icons.Rounded.Info, contentDescription = null, modifier = Modifier.size(22.dp))
                             }
+                        }
+                        if (!(screen == AppScreen.HOME && showTopActions)) {
+                            Text(
+                                topTitle,
+                                modifier = Modifier.weight(1f, fill = true),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else {
+                            Spacer(Modifier.weight(1f))
                         }
                     }
                 },
@@ -2901,14 +3054,40 @@ fun MainScreen(
                             IconButton(onClick = { showPicker = true }) {
                                 Icon(Icons.Rounded.Add, contentDescription = text(language, "Uygulama ekle", "Add app", "Ajouter une app", "Añadir app", "添加应用", "ऐप जोड़ें", "Добавить приложение", "إضافة تطبيق"))
                             }
-                            IconButton(onClick = { showTestShare = true }) {
-                                Icon(Icons.Rounded.Share, contentDescription = text(language, "Yeni test paylaş", "Share new test"))
+                            if (showTopActions) {
+                                IconButton(onClick = { showTestShare = true }) {
+                                    Icon(Icons.Rounded.Share, contentDescription = text(language, "Yeni test paylaş", "Share new test"))
+                                }
+                                IconButton(onClick = { screen = AppScreen.HOWTO }) {
+                                    Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = text(language, "Nasıl kullanılır", "How to use", "Utilisation", "Cómo usar", "如何使用", "कैसे उपयोग करें", "Как использовать", "طريقة الاستخدام"))
+                                }
+                                if (isPro) {
+                                    TopActionPill(
+                                        onClick = { showProHub = true },
+                                        color = MaterialTheme.colorScheme.secondary.copy(alpha = if (isDarkScheme()) 0.26f else 0.18f),
+                                        contentColor = MaterialTheme.colorScheme.secondary
+                                    ) {
+                                        Icon(Icons.Rounded.Star, contentDescription = text(language, "Pro araçlar", "Pro tools", "Outils Pro", "Herramientas Pro", "Pro 工具", "Pro टूल", "Инструменты Pro", "أدوات Pro"), modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                                if (debugModeEnabled) {
+                                    TopActionPill(
+                                        onClick = { screen = AppScreen.DEBUG },
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.28f else 0.16f),
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    ) {
+                                        Icon(Icons.Rounded.Info, contentDescription = text(language, "Debug sayfası", "Debug page", "Page debug", "Página debug", "调试页面", "Debug page", "Страница отладки", "صفحة التصحيح", de = "Debug-Seite", ja = "デバッグページ", pt = "Página debug", id = "Halaman debug"), modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                                IconButton(onClick = { screen = AppScreen.SETTINGS }) {
+                                    Icon(Icons.Rounded.Settings, contentDescription = text(language, "Ayarlar", "Settings", "Paramètres", "Ajustes", "设置", "सेटिंग्स", "Настройки"))
+                                }
                             }
-                            IconButton(onClick = { screen = AppScreen.HOWTO }) {
-                                Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = text(language, "Nasıl kullanılır", "How to use", "Utilisation", "Cómo usar", "如何使用", "कैसे उपयोग करें", "Как использовать", "طريقة الاستخدام"))
-                            }
-                            IconButton(onClick = { screen = AppScreen.SETTINGS }) {
-                                Icon(Icons.Rounded.Settings, contentDescription = text(language, "Ayarlar", "Settings", "Paramètres", "Ajustes", "设置", "सेटिंग्स", "Настройки"))
+                            IconButton(onClick = { showTopActions = !showTopActions }) {
+                                ActionRailToggleIcon(
+                                    expanded = showTopActions,
+                                    modifier = Modifier.size(25.dp)
+                                )
                             }
                         }
                     }
@@ -2939,8 +3118,22 @@ fun MainScreen(
                         notificationAllowed = notificationAllowed,
                         overlayAllowed = overlayAllowed,
                         liveOverlayEnabled = liveOverlayEnabled,
-                        showLiveOverlayOption = isDebuggableApp(context),
+                        showLiveOverlayOption = true,
                         isPro = isPro,
+                        appBackground = appBackground,
+                        customGradient = customGradient,
+                        onBackgroundChange = { style ->
+                            appBackground = style
+                            prefs.edit().putString(KEY_BACKGROUND_STYLE, style.name).apply()
+                        },
+                        onCustomGradientChange = { gradient ->
+                            customGradient = gradient
+                            prefs.edit()
+                                .putLong(KEY_GRADIENT_START, gradient.startColor)
+                                .putLong(KEY_GRADIENT_END, gradient.endColor)
+                                .putString(KEY_GRADIENT_TYPE, gradient.type.name)
+                                .apply()
+                        },
                         languageMode = languageMode,
                         onLanguageChange = {
                             languageMode = it
@@ -2971,6 +3164,13 @@ fun MainScreen(
                         },
                         appVersionName = appVersionName,
                         playUpdateState = playUpdateState,
+                        usageAccess = usageAccess,
+                        debugModeEnabled = debugModeEnabled,
+                        onDisableDebugMode = {
+                            debugModeEnabled = false
+                            prefs.edit().putBoolean(KEY_DEBUG_MODE_ENABLED, false).apply()
+                        },
+                        onOpenDebugMode = { screen = AppScreen.DEBUG },
                         onRequestNotificationPermission = onOpenNotificationSettings,
                         onSendMail = { sendSupportMail(context, language) },
                         onDonate = { openDonationPage(context) },
@@ -3089,13 +3289,124 @@ fun MainScreen(
                     }
                 }
 
+                AppScreen.DEBUG -> {
+                    DebugPage(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(p)
+                            .padding(10.dp),
+                        language = language,
+                        appVersionName = appVersionName,
+                        usageAccess = usageAccess,
+                        overlayAllowed = overlayAllowed,
+                        liveOverlayEnabled = liveOverlayEnabled,
+                        notificationAllowed = notificationAllowed,
+                        trackedApps = tracked,
+                        todayUsageMap = todayUsageMap,
+                        totalUsageMap = totalUsageMap,
+                        todayLoading = todayUsageLoading,
+                        totalLoading = totalUsageLoading,
+                        onRefresh = { requestUsageRefresh(force = true) },
+                        onDisable = {
+                            debugModeEnabled = false
+                            prefs.edit().putBoolean(KEY_DEBUG_MODE_ENABLED, false).apply()
+                            screen = AppScreen.SETTINGS
+                        }
+                    )
+                }
+
                 AppScreen.HOME -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(p)
                             .padding(10.dp)
+                            .pointerInput(homeListState) {
+                                detectVerticalDragGestures(
+                                    onDragEnd = {
+                                        if (homePullDistance > 90f) {
+                                            requestUsageRefresh(force = true)
+                                        }
+                                        homePullDistance = 0f
+                                    },
+                                    onDragCancel = { homePullDistance = 0f },
+                                    onVerticalDrag = { _, dragAmount ->
+                                        val atTop = homeListState.firstVisibleItemIndex == 0 &&
+                                            homeListState.firstVisibleItemScrollOffset == 0
+                                        if (atTop && dragAmount > 0f) {
+                                            homePullDistance = (homePullDistance + dragAmount).coerceAtMost(160f)
+                                        } else if (dragAmount < 0f) {
+                                            homePullDistance = (homePullDistance + dragAmount).coerceAtLeast(0f)
+                                        }
+                                    }
+                                )
+                            }
                     ) {
+                        if (todayUsageLoading || totalUsageLoading) {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .zIndex(3f),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            )
+                        }
+                        if (homePullDistance > 8f) {
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .graphicsLayer {
+                                        translationY = (homePullDistance / 4f).coerceAtMost(34f)
+                                    }
+                                    .zIndex(2f),
+                                color = canvasColor(),
+                                contentColor = MaterialTheme.colorScheme.onSurface,
+                                shape = RoundedCornerShape(999.dp),
+                                border = panelBorder(),
+                                shadowElevation = 8.dp
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Rounded.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .size(17.dp)
+                                                .graphicsLayer {
+                                                    rotationZ = (homePullDistance / 90f).coerceIn(0f, 1f) * 180f
+                                                }
+                                        )
+                                        Text(
+                                            text = if (homePullDistance > 90f) {
+                                                text(language, "Bırak yenilensin", "Release to refresh", "Relâcher pour actualiser", "Suelta para actualizar", "松开刷新", "छोड़ें और रीफ्रेश करें", "Отпустите для обновления", "اترك للتحديث", de = "Zum Aktualisieren loslassen", ja = "離して更新", pt = "Solte para atualizar", id = "Lepas untuk refresh")
+                                            } else {
+                                                text(language, "Yenilemek için çek", "Pull to refresh", "Tirer pour actualiser", "Tira para actualizar", "下拉刷新", "रीफ्रेश के लिए खींचें", "Потяните для обновления", "اسحب للتحديث", de = "Zum Aktualisieren ziehen", ja = "引いて更新", pt = "Puxe para atualizar", id = "Tarik untuk refresh")
+                                            },
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { (homePullDistance / 90f).coerceIn(0f, 1f) },
+                                        modifier = Modifier
+                                            .width(132.dp)
+                                            .height(3.dp)
+                                            .clip(RoundedCornerShape(999.dp)),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                    )
+                                }
+                            }
+                        }
                         LazyColumn(
                             state = homeListState,
                             modifier = Modifier.fillMaxSize(),
@@ -3114,6 +3425,14 @@ fun MainScreen(
                                         screen = AppScreen.GALLERY
                                     }
                                     )
+                                }
+                                if (isPro) {
+                                    item {
+                                        ProHomePanel(
+                                            language = language,
+                                            onOpen = { showProHub = true }
+                                        )
+                                    }
                                 }
                                 item {
                                     OutlinedTextField(
@@ -3189,7 +3508,7 @@ fun MainScreen(
                                             SwipeableAppCard(
                                                 language = language,
                                                 onArchive = { onArchiveApp(item.packageName, true) },
-                                                onDelete = { deleteTarget = item }
+                                                onDelete = { onDeleteApp(item.packageName) }
                                             ) {
                                             AppUsageCard(
                                                 item = item,
@@ -3283,7 +3602,6 @@ fun MainScreen(
             onDismiss = { showTestShare = false }
         )
     }
-
     daySetupTarget?.let { target ->
         DaySetupDialog(
             language = language,
@@ -3292,10 +3610,85 @@ fun MainScreen(
             onConfirm = { day ->
                 if (target.isNew) {
                     onTrackApp(target.packageName, target.label, day)
+                    addAnotherPromptLabel = target.label
                 } else {
                     onUpdateStartDay(target.packageName, day)
                 }
                 daySetupTarget = null
+            }
+        )
+    }
+
+    addAnotherPromptLabel?.let { label ->
+        ConfirmationSheet(
+            title = text(
+                language,
+                "Uygulama eklendi",
+                "App added",
+                "Application ajoutée",
+                "App añadida",
+                "应用已添加",
+                "ऐप जोड़ दिया गया",
+                "Приложение добавлено",
+                "تمت إضافة التطبيق",
+                de = "App hinzugefügt",
+                ja = "アプリを追加しました",
+                pt = "App adicionado",
+                id = "Aplikasi ditambahkan"
+            ),
+            message = text(
+                language,
+                "$label takip listesine 1. günden eklendi. İstersen şimdi başka bir test uygulaması daha ekleyebilirsin.",
+                "$label was added to tracking from day 1. You can add another test app now if you want.",
+                "$label a été ajoutée au suivi depuis le jour 1. Vous pouvez ajouter une autre app de test maintenant.",
+                "$label se añadió al seguimiento desde el día 1. Puedes añadir otra app de prueba ahora.",
+                "$label 已从第 1 天添加到跟踪。你现在可以继续添加另一个测试应用。",
+                "$label को दिन 1 से ट्रैकिंग में जोड़ा गया। चाहें तो अभी दूसरा टेस्ट ऐप जोड़ें।",
+                "$label добавлено в отслеживание с 1-го дня. При желании можно добавить ещё одно тестовое приложение.",
+                "تمت إضافة $label إلى المتابعة من اليوم 1. يمكنك إضافة تطبيق اختبار آخر الآن.",
+                de = "$label wurde ab Tag 1 zur Verfolgung hinzugefügt. Du kannst jetzt eine weitere Test-App hinzufügen.",
+                ja = "$label は1日目から追跡に追加されました。必要なら別のテストアプリも追加できます。",
+                pt = "$label foi adicionado ao acompanhamento desde o dia 1. Você pode adicionar outro app de teste agora.",
+                id = "$label ditambahkan ke pelacakan mulai hari 1. Anda bisa menambahkan aplikasi tes lain sekarang."
+            ),
+            confirmLabel = text(
+                language,
+                "Başka uygulama ekle",
+                "Add another app",
+                "Ajouter une autre app",
+                "Añadir otra app",
+                "再添加一个应用",
+                "दूसरा ऐप जोड़ें",
+                "Добавить ещё приложение",
+                "إضافة تطبيق آخر",
+                de = "Weitere App hinzufügen",
+                ja = "別のアプリを追加",
+                pt = "Adicionar outro app",
+                id = "Tambah aplikasi lain"
+            ),
+            dismissLabel = text(
+                language,
+                "Kapat",
+                "Close",
+                "Fermer",
+                "Cerrar",
+                "关闭",
+                "बंद करें",
+                "Закрыть",
+                "إغلاق",
+                de = "Schließen",
+                ja = "閉じる",
+                pt = "Fechar",
+                id = "Tutup"
+            ),
+            onDismiss = {
+                addAnotherPromptLabel = null
+                screen = AppScreen.HOME
+            },
+            onConfirm = {
+                addAnotherPromptLabel = null
+                screen = AppScreen.HOME
+                showPicker = true
             }
         )
     }
@@ -3430,6 +3823,16 @@ fun MainScreen(
             }
         )
     }
+    if (whatsNewVisible) {
+        ConfirmationSheet(
+            title = text(language, "Yenilikler", "What's new", "Nouveautés", "Novedades", "更新内容", "नया क्या है", "Что нового", "ما الجديد", de = "Neuigkeiten", ja = "新機能", pt = "Novidades", id = "Yang baru"),
+            message = whatsNewText(language),
+            confirmLabel = text(language, "Tamam", "OK", "OK", "Aceptar", "确定", "ठीक है", "ОК", "حسناً", de = "OK", ja = "OK", pt = "OK", id = "OK"),
+            dismissLabel = text(language, "Kapat", "Close", "Fermer", "Cerrar", "关闭", "बंद करें", "Закрыть", "إغلاق", de = "Schließen", ja = "閉じる", pt = "Fechar", id = "Tutup"),
+            onDismiss = { whatsNewVisible = false },
+            onConfirm = { whatsNewVisible = false }
+        )
+    }
 }
 
 @Composable
@@ -3510,6 +3913,103 @@ private fun DashboardHeader(
 }
 
 @Composable
+private fun ProHomePanel(
+    language: AppLanguage,
+    onOpen: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = if (isDarkScheme()) 0.30f else 0.18f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .background(
+                    Brush.linearGradient(
+                        if (isDarkScheme()) {
+                            listOf(Color(0xFF203239).copy(alpha = 0.96f), Color(0xFF2B281E).copy(alpha = 0.94f), Color(0xFF172226).copy(alpha = 0.96f))
+                        } else {
+                            listOf(Color(0xFFFFF6DF), Color(0xFFE9F5F0), Color(0xFFFFFEFA))
+                        }
+                    )
+                )
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    color = if (isDarkScheme()) Color(0xFFE2C89A).copy(alpha = 0.18f) else Color(0xFF0F5966).copy(alpha = 0.10f),
+                    contentColor = if (isDarkScheme()) Color(0xFFEFD8AA) else Color(0xFF0F5966),
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, if (isDarkScheme()) Color(0xFFE2C89A).copy(alpha = 0.28f) else Color(0xFF0F5966).copy(alpha = 0.16f))
+                ) {
+                    Icon(Icons.Rounded.Star, contentDescription = null, modifier = Modifier.padding(10.dp).size(20.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = text(language, "Pro araçlar hazır", "Pro tools ready", "Outils Pro prêts", "Herramientas Pro listas", "Pro 工具已就绪", "Pro टूल तैयार", "Инструменты Pro готовы", "أدوات Pro جاهزة", de = "Pro-Werkzeuge bereit", ja = "Proツール準備完了", pt = "Ferramentas Pro prontas", id = "Alat Pro siap"),
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 17.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = text(language, "Reklamsız görünüm, şablonlar, topluluklar ve testçi notları.", "Ad-free view, templates, communities and tester notes.", "Vue sans publicité, modèles, communautés et notes de testeurs.", "Vista sin anuncios, plantillas, comunidades y notas de testers.", "无广告视图、模板、社区和测试者备注。", "बिना विज्ञापन, टेम्पलेट, समुदाय और tester notes.", "Без рекламы, шаблоны, сообщества и заметки тестировщиков.", "عرض بلا إعلانات وقوالب ومجتمعات وملاحظات مختبرين.", de = "Werbefreie Ansicht, Vorlagen, Communitys und Tester-Notizen.", ja = "広告なし表示、テンプレート、コミュニティ、テスター記録。", pt = "Visual sem anúncios, modelos, comunidades e notas de testadores.", id = "Tampilan bebas iklan, template, komunitas, dan catatan penguji."),
+                        color = secondaryTextColor(),
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp), tint = secondaryTextColor())
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ProHomeChip(Icons.Rounded.Info, text(language, "Bilgi", "Guide", "Guide", "Guía", "指南", "गाइड", "Гайд", "الدليل"), Modifier.weight(1f))
+                ProHomeChip(Icons.Rounded.Share, text(language, "Paylaş", "Post", "Post", "Post", "帖子", "पोस्ट", "Пост", "منشور"), Modifier.weight(1f))
+                ProHomeChip(Icons.Rounded.Star, text(language, "Kaynak", "Community", "Communauté", "Comunidad", "社区", "समुदाय", "Сообщество", "المجتمع"), Modifier.weight(1f))
+                ProHomeChip(Icons.Rounded.Done, text(language, "Testçi", "Testers", "Testeurs", "Testers", "测试者", "टेस्टर", "Тестеры", "المختبرون"), Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProHomeChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = rowSurfaceColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, separatorColor())
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 9.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+            Text(label, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
 private fun GridDotsIcon(modifier: Modifier = Modifier) {
     ComposeCanvas(modifier = modifier) {
         val gap = size.minDimension / 3.6f
@@ -3526,6 +4026,52 @@ private fun GridDotsIcon(modifier: Modifier = Modifier) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun TopActionPill(
+    onClick: () -> Unit,
+    color: Color,
+    contentColor: Color,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .padding(horizontal = 1.dp)
+            .size(40.dp)
+            .clickable(onClick = onClick),
+        color = color,
+        contentColor = contentColor,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, contentColor.copy(alpha = 0.22f))
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ActionRailToggleIcon(
+    expanded: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    ComposeCanvas(modifier = modifier) {
+        val path = androidx.compose.ui.graphics.Path().apply {
+            if (expanded) {
+                moveTo(size.width * 0.30f, size.height * 0.50f)
+                lineTo(size.width * 0.70f, size.height * 0.24f)
+                lineTo(size.width * 0.70f, size.height * 0.76f)
+            } else {
+                moveTo(size.width * 0.70f, size.height * 0.50f)
+                lineTo(size.width * 0.30f, size.height * 0.24f)
+                lineTo(size.width * 0.30f, size.height * 0.76f)
+            }
+            close()
+        }
+        drawPath(path, accent)
     }
 }
 
@@ -3554,6 +4100,88 @@ private fun HomeFilterBar(
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HomeQuickMenuSheet(
+    language: AppLanguage,
+    isPro: Boolean,
+    onDismiss: () -> Unit,
+    onShareTest: () -> Unit,
+    onHowTo: () -> Unit,
+    onSettings: () -> Unit,
+    onPro: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 34.dp, topEnd = 34.dp),
+        containerColor = canvasColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        scrimColor = Color.Black.copy(alpha = 0.48f),
+        dragHandle = {
+            Box(
+                Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .size(width = 46.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(separatorColor())
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text(language, "Hızlı işlemler", "Quick actions", "Actions rapides", "Acciones rápidas", "快捷操作", "त्वरित क्रियाएँ", "Быстрые действия", "إجراءات سريعة", de = "Schnellaktionen", ja = "クイック操作", pt = "Ações rápidas", id = "Aksi cepat"),
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 22.sp
+            )
+            Text(
+                text(language, "Başlığı boş bırakmak için sık kullanılan araçlar burada toplandı.", "Tools are grouped here so the app title stays readable.", "Les outils sont regroupés ici pour garder le titre lisible.", "Las herramientas se agrupan aquí para que el título siga legible.", "工具集中在这里，让应用标题保持清晰。", "ऐप शीर्षक साफ़ रहे इसलिए टूल यहाँ रखे गए हैं।", "Инструменты собраны здесь, чтобы название было читаемым.", "تم جمع الأدوات هنا ليبقى اسم التطبيق واضحاً.", de = "Werkzeuge sind hier gebündelt, damit der App-Name lesbar bleibt.", ja = "アプリ名を読みやすくするため、ツールをここにまとめました。", pt = "As ferramentas ficam aqui para manter o título legível.", id = "Alat dikumpulkan di sini agar judul tetap terbaca."),
+                color = secondaryTextColor(),
+                lineHeight = 19.sp
+            )
+            SettingsCard {
+                SettingsAction(
+                    icon = { Icon(Icons.Rounded.Share, contentDescription = null) },
+                    title = text(language, "Yeni test paylaş", "Share new test", "Partager un nouveau test", "Compartir nueva prueba", "分享新测试", "नया टेस्ट साझा करें", "Поделиться новым тестом", "مشاركة اختبار جديد", de = "Neuen Test teilen", ja = "新しいテストを共有", pt = "Compartilhar novo teste", id = "Bagikan tes baru"),
+                    subtitle = text(language, "Testçi arama metni ve bağlantılarını hazırla.", "Prepare tester request text and links.", "Préparez le texte et les liens pour les testeurs.", "Prepara texto y enlaces para testers.", "准备测试者招募文本和链接。", "टेस्टर अनुरोध टेक्स्ट और लिंक तैयार करें।", "Подготовьте текст и ссылки для тестировщиков.", "حضّر نص طلب المختبرين والروابط.", de = "Text und Links für Tester vorbereiten.", ja = "テスター募集文とリンクを準備します。", pt = "Prepare texto e links para testadores.", id = "Siapkan teks dan tautan permintaan penguji."),
+                    onClick = onShareTest
+                )
+                CanvasDivider()
+                SettingsAction(
+                    icon = { Icon(Icons.AutoMirrored.Rounded.Help, contentDescription = null) },
+                    title = text(language, "Nasıl kullanılır", "How to use", "Utilisation", "Cómo usar", "如何使用", "कैसे उपयोग करें", "Как использовать", "طريقة الاستخدام", de = "Anleitung", ja = "使い方", pt = "Como usar", id = "Cara pakai"),
+                    subtitle = text(language, "İlk kurulum ve takip akışını tekrar göster.", "Show setup and tracking guide again.", "Afficher à nouveau le guide de configuration.", "Mostrar de nuevo la guía de uso.", "再次显示设置和跟踪指南。", "सेटअप और ट्रैकिंग गाइड फिर दिखाएँ।", "Показать руководство снова.", "اعرض دليل الإعداد والمتابعة مرة أخرى.", de = "Einrichtung und Tracking erneut anzeigen.", ja = "設定と追跡ガイドを再表示します。", pt = "Mostrar o guia novamente.", id = "Tampilkan panduan lagi."),
+                    onClick = onHowTo
+                )
+                CanvasDivider()
+                SettingsAction(
+                    icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
+                    title = text(language, "Ayarlar", "Settings", "Paramètres", "Ajustes", "设置", "सेटिंग्स", "Настройки", "الإعدادات", de = "Einstellungen", ja = "設定", pt = "Configurações", id = "Pengaturan"),
+                    subtitle = text(language, "Dil, tema, bildirim ve canlı süre balonu.", "Language, theme, reminders and live usage bubble.", "Langue, thème, rappels et bulle de durée.", "Idioma, tema, recordatorios y burbuja.", "语言、主题、提醒和实时气泡。", "भाषा, थीम, रिमाइंडर और लाइव बबल।", "Язык, тема, напоминания и плавающий таймер.", "اللغة والسمة والتذكيرات وفقاعة الوقت.", de = "Sprache, Design, Erinnerungen und Zeitblase.", ja = "言語、テーマ、通知、ライブバブル。", pt = "Idioma, tema, lembretes e bolha ao vivo.", id = "Bahasa, tema, pengingat, dan gelembung durasi."),
+                    onClick = onSettings
+                )
+                if (isPro) {
+                    CanvasDivider()
+                    SettingsAction(
+                        icon = { Icon(Icons.Rounded.Star, contentDescription = null) },
+                        title = text(language, "Pro araçlar", "Pro tools", "Outils Pro", "Herramientas Pro", "Pro 工具", "Pro टूल", "Инструменты Pro", "أدوات Pro", de = "Pro-Werkzeuge", ja = "Proツール", pt = "Ferramentas Pro", id = "Alat Pro"),
+                        subtitle = text(language, "Şablonlar, topluluklar ve testçi notları.", "Templates, communities and tester notes.", "Modèles, communautés et notes.", "Plantillas, comunidades y notas.", "模板、社区和测试者备注。", "टेम्पलेट, समुदाय और नोट्स।", "Шаблоны, сообщества и заметки.", "قوالب ومجتمعات وملاحظات.", de = "Vorlagen, Communitys und Notizen.", ja = "テンプレート、コミュニティ、メモ。", pt = "Modelos, comunidades e notas.", id = "Template, komunitas, dan catatan."),
+                        onClick = onPro
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun LanguageChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
@@ -4489,27 +5117,44 @@ private fun DaySetupDialog(
         skipPartiallyExpanded = true,
         confirmValueChange = { it != SheetValue.Hidden }
     )
-    val initialDay = target.initialDay.coerceIn(dayRange.first, dayRange.last)
+    val initialDay = (if (target.isNew) 1 else target.initialDay).coerceIn(dayRange.first, dayRange.last)
     val appIcon = remember(target.packageName) {
         runCatching {
             drawableToBitmap(context.packageManager.getApplicationIcon(target.packageName))
         }.getOrNull()
     }
-    val selectedDay by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val center = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
-            val centered = layoutInfo.visibleItemsInfo.minByOrNull { item ->
-                abs((item.offset + item.size / 2) - center)
+    // Authoritative selection, seeded from initialDay (day 1 for a newly added
+    // app). It changes only when the user actually drags the wheel or taps a day
+    // — the initial programmatic scroll below must NOT shift it, which previously
+    // made new apps default to day 2 instead of 1.
+    var selectedDay by remember(target) { mutableIntStateOf(initialDay) }
+
+    LaunchedEffect(target) {
+        var dragging = false
+        launch {
+            listState.interactionSource.interactions.collect { interaction ->
+                when (interaction) {
+                    is DragInteraction.Start -> dragging = true
+                    is DragInteraction.Stop, is DragInteraction.Cancel -> dragging = false
+                }
             }
-            (centered?.index?.plus(1) ?: initialDay).coerceIn(dayRange.first, dayRange.last)
+        }
+        snapshotFlow {
+            val layoutInfo = listState.layoutInfo
+            if (layoutInfo.visibleItemsInfo.isEmpty()) return@snapshotFlow null
+            val center = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+            layoutInfo.visibleItemsInfo.minByOrNull { item ->
+                abs((item.offset + item.size / 2) - center)
+            }?.index
+        }.collect { index ->
+            if (dragging && index != null) {
+                selectedDay = (index + 1).coerceIn(dayRange.first, dayRange.last)
+            }
         }
     }
 
     LaunchedEffect(target) {
-        scope.launch {
-            listState.scrollToItem((initialDay - 1).coerceIn(0, dayRange.last - 1), scrollOffset = 62)
-        }
+        listState.scrollToItem((initialDay - 1).coerceIn(0, dayRange.last - 1), scrollOffset = 62)
     }
 
     ModalBottomSheet(
@@ -4731,6 +5376,7 @@ private fun DaySetupDialog(
                                             .fillMaxWidth()
                                             .height(44.dp)
                                             .clickable {
+                                                selectedDay = day
                                                 scope.launch {
                                                     listState.scrollToItem((day - 1).coerceIn(0, dayRange.last - 1), scrollOffset = 62)
                                                 }
@@ -4845,6 +5491,10 @@ private fun SettingsPage(
     liveOverlayEnabled: Boolean,
     showLiveOverlayOption: Boolean,
     isPro: Boolean,
+    appBackground: AppBackground,
+    customGradient: CustomGradient,
+    onBackgroundChange: (AppBackground) -> Unit,
+    onCustomGradientChange: (CustomGradient) -> Unit,
     languageMode: LanguageMode,
     onLanguageChange: (LanguageMode) -> Unit,
     onThemeChange: (AppTheme) -> Unit,
@@ -4854,6 +5504,10 @@ private fun SettingsPage(
     onLiveOverlayChange: (Boolean) -> Unit,
     appVersionName: String,
     playUpdateState: PlayUpdateState,
+    usageAccess: Boolean,
+    debugModeEnabled: Boolean,
+    onDisableDebugMode: () -> Unit,
+    onOpenDebugMode: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onSendMail: () -> Unit,
     onDonate: () -> Unit,
@@ -4888,6 +5542,18 @@ private fun SettingsPage(
                     onClick = onOpenPro
                 )
         }
+        }
+        if (debugModeEnabled) {
+            item {
+                SettingsCard {
+                    SettingsAction(
+                        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                        title = text(language, "Debug sayfası", "Debug page", "Page debug", "Página debug", "调试页面", "Debug page", "Страница отладки", "صفحة التصحيح", de = "Debug-Seite", ja = "デバッグページ", pt = "Página debug", id = "Halaman debug"),
+                        subtitle = text(language, "Süre teşhisleri, izinler ve canlı balon durumunu tekrar aç.", "Reopen usage diagnostics, permissions and live bubble status.", "Rouvrez les diagnostics, autorisations et bulle.", "Reabre diagnósticos, permisos y burbuja.", "重新打开使用诊断、权限和气泡状态。", "usage diagnostics, permissions और bubble status फिर खोलें।", "Открыть диагностику, разрешения и таймер.", "أعد فتح التشخيصات والأذونات وحالة الفقاعة.", de = "Diagnose, Berechtigungen und Zeitblase öffnen.", ja = "使用診断、権限、バブル状態を再表示します。", pt = "Reabrir diagnósticos, permissões e bolha.", id = "Buka ulang diagnostik, izin, dan bubble."),
+                        onClick = onOpenDebugMode
+                    )
+                }
+            }
         }
         item {
             SettingsCard {
@@ -5050,6 +5716,108 @@ private fun SettingsPage(
         item {
             SettingsCard {
                 SettingsSection(
+                    icon = { Icon(Icons.Rounded.Palette, contentDescription = null) },
+                    title = text(language, "Arka plan", "Background", "Arrière-plan", "Fondo", "背景", "पृष्ठभूमि", "Фон")
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ThemeChip(
+                                text(language, "Normal görünüm", "Normal look", "Aspect normal", "Vista normal", "普通外观", "सामान्य रूप", "Обычный вид", "المظهر العادي", de = "Normale Ansicht", ja = "通常表示", pt = "Visual normal", id = "Tampilan normal"),
+                                appBackground == AppBackground.SIMPLE
+                            ) { onBackgroundChange(AppBackground.SIMPLE) }
+                            ThemeChip(
+                                (if (!isPro) "🔒 " else "") + text(language, "Pro görünüm", "Pro look", "Aspect Pro", "Vista Pro", "Pro 外观", "Pro रूप", "Pro-вид", "مظهر Pro", de = "Pro-Ansicht", ja = "Pro表示", pt = "Visual Pro", id = "Tampilan Pro"),
+                                appBackground == AppBackground.RICH
+                            ) { if (isPro) onBackgroundChange(AppBackground.RICH) else onOpenPro() }
+                            ThemeChip(
+                                (if (!isPro) "🔒 " else "") + text(language, "Özel", "Custom", "Personnalisé", "Personalizado", "自定义", "कस्टम", "Свой"),
+                                appBackground == AppBackground.CUSTOM
+                            ) { if (isPro) onBackgroundChange(AppBackground.CUSTOM) else onOpenPro() }
+                        }
+                        Text(
+                            text(
+                                language,
+                                "Normal görünüm herkes için açıktır. Pro görünüm ve özel arka planlar Pro üyelikle açılır.",
+                                "Normal look is available to everyone. Pro look and custom backgrounds unlock with Pro.",
+                                "L'aspect normal est disponible pour tous. L'aspect Pro et les fonds personnalisés sont réservés à Pro.",
+                                "La vista normal está disponible para todos. La vista Pro y los fondos personalizados requieren Pro.",
+                                "普通外观所有人都可使用。Pro 外观和自定义背景需 Pro 解锁。",
+                                "सामान्य रूप सभी के लिए है। Pro रूप और custom background Pro से खुलते हैं।",
+                                "Обычный вид доступен всем. Pro-вид и свои фоны открываются с Pro.",
+                                "المظهر العادي متاح للجميع. مظهر Pro والخلفيات المخصصة تتطلب Pro.",
+                                de = "Die normale Ansicht ist für alle verfügbar. Pro-Ansicht und eigene Hintergründe werden mit Pro freigeschaltet.",
+                                ja = "通常表示は全員が使えます。Pro表示とカスタム背景はProで利用できます。",
+                                pt = "O visual normal está disponível para todos. O visual Pro e fundos personalizados exigem Pro.",
+                                id = "Tampilan normal tersedia untuk semua. Tampilan Pro dan latar khusus terbuka dengan Pro."
+                            ),
+                            color = secondaryTextColor()
+                        )
+                        if (isPro && appBackground == AppBackground.CUSTOM) {
+                            val palette = listOf(
+                                0xFF6A11CB, 0xFFB24592, 0xFFF7B733, 0xFF2575FC,
+                                0xFF11998E, 0xFFEB3349, 0xFF141E30, 0xFFFF8008
+                            )
+                            Text(text(language, "Başlangıç rengi", "Start color"), color = secondaryTextColor())
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                palette.forEach { argb ->
+                                    Box(
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(Color(argb))
+                                            .border(
+                                                BorderStroke(
+                                                    if (customGradient.startColor == argb) 3.dp else 1.dp,
+                                                    if (customGradient.startColor == argb) MaterialTheme.colorScheme.onSurface else separatorColor()
+                                                ),
+                                                RoundedCornerShape(50)
+                                            )
+                                            .clickable { onCustomGradientChange(customGradient.copy(startColor = argb)) }
+                                    )
+                                }
+                            }
+                            Text(text(language, "Bitiş rengi", "End color"), color = secondaryTextColor())
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                palette.forEach { argb ->
+                                    Box(
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(Color(argb))
+                                            .border(
+                                                BorderStroke(
+                                                    if (customGradient.endColor == argb) 3.dp else 1.dp,
+                                                    if (customGradient.endColor == argb) MaterialTheme.colorScheme.onSurface else separatorColor()
+                                                ),
+                                                RoundedCornerShape(50)
+                                            )
+                                            .clickable { onCustomGradientChange(customGradient.copy(endColor = argb)) }
+                                    )
+                                }
+                            }
+                            Text(text(language, "Gradyen türü", "Gradient type"), color = secondaryTextColor())
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ThemeChip(text(language, "Dikey", "Vertical"), customGradient.type == GradientType.VERTICAL) {
+                                    onCustomGradientChange(customGradient.copy(type = GradientType.VERTICAL))
+                                }
+                                ThemeChip(text(language, "Çapraz", "Diagonal"), customGradient.type == GradientType.DIAGONAL) {
+                                    onCustomGradientChange(customGradient.copy(type = GradientType.DIAGONAL))
+                                }
+                                ThemeChip(text(language, "Yatay", "Horizontal"), customGradient.type == GradientType.HORIZONTAL) {
+                                    onCustomGradientChange(customGradient.copy(type = GradientType.HORIZONTAL))
+                                }
+                                ThemeChip(text(language, "Radyal", "Radial"), customGradient.type == GradientType.RADIAL) {
+                                    onCustomGradientChange(customGradient.copy(type = GradientType.RADIAL))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SettingsCard {
+                SettingsSection(
                     icon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
                     title = text(language, "Bildirim saati", "Reminder time", "Heure du rappel", "Hora del recordatorio", "提醒时间", "रिमाइंडर समय", "Время напоминания")
                 ) {
@@ -5145,8 +5913,52 @@ private fun SettingsPage(
                                 )
                             }
                             Switch(
-                                checked = liveOverlayEnabled && overlayAllowed,
+                                checked = liveOverlayEnabled,
                                 onCheckedChange = { onLiveOverlayChange(it) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SettingsCard {
+                SettingsSection(
+                    icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                    title = text(language, "Debug modu", "Debug mode", "Mode debug", "Modo debug", "调试模式", "Debug मोड", "Режим отладки", "وضع التصحيح", de = "Debug-Modus", ja = "デバッグモード", pt = "Modo debug", id = "Mode debug")
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text(
+                                language,
+                                "Açmak için Ayarlar başlığındaki ayarlar ikonuna 4 kez dokun.",
+                                "Tap the settings icon in the Settings title 4 times to enable it.",
+                                "Touchez 4 fois l'icône des paramètres dans le titre.",
+                                "Toca 4 veces el icono de ajustes del título.",
+                                "点击设置标题中的设置图标 4 次即可开启。",
+                                "Settings शीर्षक के आइकन पर 4 बार टैप करें।",
+                                "Нажмите значок настроек в заголовке 4 раза.",
+                                "اضغط أيقونة الإعدادات في العنوان 4 مرات.",
+                                de = "Tippe 4 Mal auf das Einstellungssymbol im Titel.",
+                                ja = "設定タイトルの設定アイコンを4回タップします。",
+                                pt = "Toque 4 vezes no ícone de configurações do título.",
+                                id = "Ketuk ikon pengaturan di judul 4 kali."
+                            ),
+                            color = secondaryTextColor()
+                        )
+                        if (debugModeEnabled) {
+                            SettingsAction(
+                                icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                                title = text(language, "Debug sayfasını aç", "Open debug page", "Ouvrir la page debug", "Abrir página debug", "打开调试页面", "Debug page खोलें", "Открыть страницу отладки", "فتح صفحة التصحيح", de = "Debug-Seite öffnen", ja = "デバッグページを開く", pt = "Abrir página debug", id = "Buka halaman debug"),
+                                subtitle = text(language, "Test uygulamalarının bugün/toplam süreleri ve izin durumları burada görünür.", "Shows test apps, today/total minutes and permission status.", "Affiche les apps, durées et autorisations.", "Muestra apps, minutos y permisos.", "显示应用、分钟和权限状态。", "ऐप, मिनट और permissions दिखाता है।", "Показывает приложения, минуты и разрешения.", "يعرض التطبيقات والدقائق والأذونات.", de = "Zeigt Apps, Minuten und Berechtigungen.", ja = "アプリ、分数、権限を表示します。", pt = "Mostra apps, minutos e permissões.", id = "Menampilkan app, menit, dan izin."),
+                                onClick = onOpenDebugMode
+                            )
+                            CanvasDivider()
+                            SettingsAction(
+                                icon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+                                title = text(language, "Debug modunu kapat", "Disable debug mode", "Désactiver le debug", "Desactivar debug", "关闭调试模式", "Debug mode बंद करें", "Отключить режим отладки", "إيقاف وضع التصحيح", de = "Debug-Modus ausschalten", ja = "デバッグモードを無効化", pt = "Desativar modo debug", id = "Matikan mode debug"),
+                                subtitle = text(language, "Debug kısayolu ve teşhis sayfası gizlenir.", "Hides the debug shortcut and diagnostics page.", "Masque le raccourci debug.", "Oculta el acceso debug.", "隐藏调试入口。", "Debug shortcut छिपेगा।", "Скрывает отладку.", "يخفي اختصار التصحيح.", de = "Blendet Debug aus.", ja = "デバッグを非表示にします。", pt = "Oculta o debug.", id = "Menyembunyikan debug."),
+                                onClick = onDisableDebugMode
                             )
                         }
                     }
@@ -5334,6 +6146,190 @@ private fun InfoBullet(
         ) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Text(body, color = secondaryTextColor(), fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun DebugInfoPanel(
+    language: AppLanguage,
+    appVersionName: String,
+    usageAccess: Boolean,
+    overlayAllowed: Boolean,
+    liveOverlayEnabled: Boolean,
+    notificationAllowed: Boolean,
+    trackedApps: List<TrackedApp>,
+    onDisable: () -> Unit
+) {
+    val active = trackedApps.count { !it.isArchived && it.completedAtMillis == null }
+    val completed = trackedApps.count { it.completedAtMillis != null }
+    val archived = trackedApps.count { it.isArchived }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        InfoBullet(
+            title = text(language, "Durum", "Status", "Statut", "Estado", "状态", "स्थिति", "Статус", "الحالة", de = "Status", ja = "状態", pt = "Estado", id = "Status"),
+            body = buildString {
+                append("Closed Test Tracker $appVersionName\n")
+                append("${Build.MANUFACTURER} ${Build.MODEL} - Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})\n")
+                append("Usage Access: ${if (usageAccess) "OK" else "OFF"}\n")
+                append("Overlay permission: ${if (overlayAllowed) "OK" else "OFF"}\n")
+                append("Live bubble preference: ${if (liveOverlayEnabled) "ON" else "OFF"}\n")
+                append("Notifications: ${if (notificationAllowed) "OK" else "OFF"}")
+            }
+        )
+        InfoBullet(
+            title = text(language, "Uygulama kayıtları", "Tracked apps", "Apps suivies", "Apps seguidas", "跟踪应用", "ट्रैक ऐप्स", "Отслеживаемые приложения", "التطبيقات المتابعة", de = "Verfolgte Apps", ja = "追跡アプリ", pt = "Apps acompanhados", id = "Aplikasi dilacak"),
+            body = text(
+                language,
+                "Toplam: ${trackedApps.size}, aktif: $active, tamamlanan: $completed, arşiv: $archived. Liste ve ayrıntı süreleri farklı görünürse bu ekranın bilgileriyle hata bildir.",
+                "Total: ${trackedApps.size}, active: $active, completed: $completed, archived: $archived. If list and detail times differ, report the issue with this screen's details.",
+                "Total : ${trackedApps.size}, actifs : $active, terminés : $completed, archive : $archived. Si les durées diffèrent, signalez avec ces informations.",
+                "Total: ${trackedApps.size}, activas: $active, completadas: $completed, archivo: $archived. Si los tiempos difieren, informa con estos datos.",
+                "总计：${trackedApps.size}，活跃：$active，完成：$completed，归档：$archived。如列表与详情时间不同，请附上此信息反馈。",
+                "कुल: ${trackedApps.size}, सक्रिय: $active, पूर्ण: $completed, आर्काइव: $archived. समय अलग दिखे तो इस जानकारी के साथ रिपोर्ट करें।",
+                "Всего: ${trackedApps.size}, активных: $active, завершено: $completed, архив: $archived. Если время отличается, отправьте эти данные.",
+                "الإجمالي: ${trackedApps.size}، نشط: $active، مكتمل: $completed، أرشيف: $archived. إذا اختلفت المدة أرسل هذه المعلومات.",
+                de = "Gesamt: ${trackedApps.size}, aktiv: $active, abgeschlossen: $completed, Archiv: $archived. Bei abweichenden Zeiten diese Daten mitsenden.",
+                ja = "合計: ${trackedApps.size}、有効: $active、完了: $completed、アーカイブ: $archived。時間が違う場合はこの情報を送ってください。",
+                pt = "Total: ${trackedApps.size}, ativos: $active, concluídos: $completed, arquivo: $archived. Se os tempos divergirem, envie estes dados.",
+                id = "Total: ${trackedApps.size}, aktif: $active, selesai: $completed, arsip: $archived. Jika durasi berbeda, laporkan dengan data ini."
+            )
+        )
+        InfoBullet(
+            title = text(language, "Hata bildirimi", "Bug report", "Rapport de bug", "Informe de error", "错误报告", "बग रिपोर्ट", "Отчет об ошибке", "بلاغ خطأ", de = "Fehlerbericht", ja = "不具合報告", pt = "Relato de erro", id = "Laporan bug"),
+            body = text(
+                language,
+                "Bir hata görürsen telefon modeli, Android sürümü, uygulama adı ve ekran görüntüsü ile $SUPPORT_MAIL adresine gönder. Debug modunu kapatmak için aşağıdaki düğmeyi kullan.",
+                "If you see an issue, send phone model, Android version, app name and a screenshot to $SUPPORT_MAIL. Use the button below to disable debug mode.",
+                "En cas de problème, envoyez modèle, version Android, nom de l'app et capture à $SUPPORT_MAIL. Utilisez le bouton ci-dessous pour désactiver.",
+                "Si ves un error, envía modelo, versión Android, app y captura a $SUPPORT_MAIL. Usa el botón para desactivar el modo debug.",
+                "如遇问题，请将手机型号、Android 版本、应用名和截图发送至 $SUPPORT_MAIL。可用下方按钮关闭调试模式。",
+                "समस्या दिखे तो phone model, Android version, app name और screenshot $SUPPORT_MAIL पर भेजें। नीचे बटन से debug mode बंद करें।",
+                "При ошибке отправьте модель, версию Android, имя приложения и скриншот на $SUPPORT_MAIL. Кнопка ниже отключает режим.",
+                "إذا ظهرت مشكلة أرسل طراز الهاتف وإصدار Android واسم التطبيق ولقطة شاشة إلى $SUPPORT_MAIL. استخدم الزر أدناه لإيقاف الوضع.",
+                de = "Bei Fehlern Modell, Android-Version, App-Name und Screenshot an $SUPPORT_MAIL senden. Unten kann der Debug-Modus deaktiviert werden.",
+                ja = "問題があれば端末モデル、Androidバージョン、アプリ名、スクリーンショットを $SUPPORT_MAIL に送ってください。下のボタンで無効化できます。",
+                pt = "Se houver erro, envie modelo, versão Android, nome do app e captura para $SUPPORT_MAIL. Use o botão abaixo para desativar.",
+                id = "Jika ada masalah, kirim model, versi Android, nama app, dan screenshot ke $SUPPORT_MAIL. Gunakan tombol di bawah untuk mematikan."
+            )
+        )
+        Button(
+            onClick = onDisable,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = rowSurfaceColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ),
+            border = panelBorder()
+        ) {
+            Text(text(language, "Debug modunu kapat", "Disable debug mode", "Désactiver le debug", "Desactivar debug", "关闭调试模式", "Debug mode बंद करें", "Отключить режим отладки", "إيقاف وضع التصحيح", de = "Debug-Modus ausschalten", ja = "デバッグモードを無効化", pt = "Desativar modo debug", id = "Matikan mode debug"), fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun DebugPage(
+    modifier: Modifier,
+    language: AppLanguage,
+    appVersionName: String,
+    usageAccess: Boolean,
+    overlayAllowed: Boolean,
+    liveOverlayEnabled: Boolean,
+    notificationAllowed: Boolean,
+    trackedApps: List<TrackedApp>,
+    todayUsageMap: Map<String, Long>,
+    totalUsageMap: Map<String, Long>,
+    todayLoading: Boolean,
+    totalLoading: Boolean,
+    onRefresh: () -> Unit,
+    onDisable: () -> Unit
+) {
+    LazyColumn(
+        modifier = modifier
+            .clip(RoundedCornerShape(34.dp))
+            .background(canvasColor())
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            SettingsCard {
+                DebugInfoPanel(
+                    language = language,
+                    appVersionName = appVersionName,
+                    usageAccess = usageAccess,
+                    overlayAllowed = overlayAllowed,
+                    liveOverlayEnabled = liveOverlayEnabled,
+                    notificationAllowed = notificationAllowed,
+                    trackedApps = trackedApps,
+                    onDisable = onDisable
+                )
+            }
+        }
+        item {
+            SettingsCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text(language, "Test uygulama süreleri", "Test app usage", "Utilisation des apps", "Uso de apps", "测试应用使用", "टेस्ट ऐप उपयोग", "Использование приложений", "استخدام تطبيقات الاختبار", de = "Test-App-Nutzung", ja = "テストアプリ使用状況", pt = "Uso dos apps", id = "Pemakaian app tes"),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            text(language, "Liste ve ayrıntı farklı görünürse bu satırları kontrol et.", "If list and detail differ, check these rows.", "Si la liste et le détail diffèrent, vérifiez ici.", "Si lista y detalle difieren, revisa aquí.", "如列表和详情不同，请检查这些行。", "List/detail अलग हों तो ये rows देखें।", "Если список и детали отличаются, проверьте строки.", "إذا اختلفت القائمة والتفاصيل فتحقق من هذه الصفوف."),
+                            color = secondaryTextColor(),
+                            fontSize = 13.sp
+                        )
+                    }
+                    Button(
+                        onClick = onRefresh,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = rowSurfaceColor(), contentColor = MaterialTheme.colorScheme.onSurface),
+                        border = panelBorder()
+                    ) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+        if (trackedApps.isEmpty()) {
+            item {
+                SettingsCard {
+                    Text(text(language, "Henüz takip edilen uygulama yok.", "No tracked apps yet."), color = secondaryTextColor())
+                }
+            }
+        } else {
+            items(trackedApps, key = { it.packageName }) { app ->
+                val today = todayUsageMap[app.packageName]
+                val total = totalUsageMap[app.packageName]
+                SettingsCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(app.appLabel, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(app.packageName, color = secondaryTextColor(), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SummaryStatChip(
+                                text(language, "Bugün", "Today"),
+                                if (todayLoading && today == null) text(language, "Yükleniyor", "Loading") else "${today ?: 0} ${minuteLabel(language)}",
+                                Modifier.weight(1f)
+                            )
+                            SummaryStatChip(
+                                text(language, "Toplam", "Total"),
+                                if (totalLoading && total == null) text(language, "Yükleniyor", "Loading") else "${total ?: 0} ${minuteLabel(language)}",
+                                Modifier.weight(1f)
+                            )
+                        }
+                        val flags = listOfNotNull(
+                            if (app.isArchived) text(language, "Arşiv", "Archive") else null,
+                            if (app.completedAtMillis != null) text(language, "Tamamlandı", "Done") else null
+                        ).ifEmpty { listOf(text(language, "Aktif", "Active")) }
+                        Text(flags.joinToString(" • "), color = secondaryTextColor(), fontSize = 12.sp)
+                    }
+                }
+            }
         }
     }
 }
@@ -5922,13 +6918,17 @@ private fun SettingsCard(content: @Composable () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = rowSurfaceColor(),
+            containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurface
         ),
-        border = BorderStroke(1.dp, separatorColor()),
+        border = panelBorder(),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Column(
+            Modifier
+                .background(glassPanelBrush())
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
             content()
         }
     }
@@ -7007,6 +8007,24 @@ private fun dateFormatChipLabel(language: AppLanguage, format: DateDisplayFormat
         DateDisplayFormat.MONTH_DAY -> text(language, "Ay.Gün", "Month.Day", "Mois.Jour", "Mes.Día", "月.日", "माह.दिन", "Мес.День", "شهر.يوم")
         DateDisplayFormat.DAY_MONTH -> text(language, "Gün.Ay", "Day.Month", "Jour.Mois", "Día.Mes", "日.月", "दिन.माह", "День.Мес", "يوم.شهر")
     }
+}
+
+private fun whatsNewText(language: AppLanguage): String {
+    return text(
+        language,
+        "Canlı süre balonu ayarlarda kalıcı hale getirildi.\nYeni sürümde değişiklikleri ilk açılışta gösterme eklendi.\nDebug modu eklendi: Ayarlar başlığındaki ayarlar ikonuna 4 kez dokunarak açabilirsin.\nUygulama adı düzeltildi ve kullanım süresi teşhisi iyileştirildi.",
+        "The live usage bubble setting is now always available in Settings.\nA first-open what's new dialog was added for new versions.\nDebug mode was added: tap the settings icon in the Settings title 4 times to enable it.\nThe app name was fixed and usage-time diagnostics were improved.",
+        "Le réglage de la bulle d'utilisation en direct est maintenant toujours disponible.\nUne fenêtre Nouveautés s'affiche après une mise à jour.\nMode debug ajouté : touchez 4 fois l'icône des paramètres dans le titre.\nLe nom de l'app et le diagnostic du temps d'utilisation ont été améliorés.",
+        "El ajuste de burbuja de uso en vivo ahora siempre está disponible.\nSe añadió una ventana de novedades al abrir una nueva versión.\nModo debug añadido: toca 4 veces el icono de ajustes del título.\nSe corrigió el nombre de la app y se mejoró el diagnóstico de uso.",
+        "实时使用气泡设置现在始终显示在设置中。\n新增版本首次打开时的更新说明窗口。\n新增调试模式：点击设置标题中的设置图标 4 次即可开启。\n修复应用名称并改进使用时长诊断。",
+        "Live usage bubble सेटिंग अब Settings में हमेशा उपलब्ध है।\nनए संस्करण पर पहली बार खुलने पर What's new दिखेगा।\nDebug mode जोड़ा गया: Settings शीर्षक के icon पर 4 बार टैप करें।\nऐप नाम और usage-time diagnostics सुधारे गए।",
+        "Настройка плавающего таймера теперь всегда доступна в настройках.\nДобавлено окно изменений при первом запуске новой версии.\nДобавлен режим отладки: нажмите значок настроек в заголовке 4 раза.\nИсправлено имя приложения и улучшена диагностика времени.",
+        "أصبح خيار فقاعة الوقت المباشر متاحاً دائماً في الإعدادات.\nتمت إضافة نافذة تعرض الجديد عند فتح إصدار جديد لأول مرة.\nتمت إضافة وضع التصحيح: اضغط أيقونة الإعدادات في العنوان 4 مرات.\nتم إصلاح اسم التطبيق وتحسين تشخيص مدة الاستخدام.",
+        de = "Die Live-Zeitblase ist nun dauerhaft in den Einstellungen verfügbar.\nBeim ersten Start einer neuen Version werden Neuerungen angezeigt.\nDebug-Modus hinzugefügt: Tippe 4 Mal auf das Einstellungssymbol im Titel.\nApp-Name und Nutzungszeit-Diagnose wurden verbessert.",
+        ja = "ライブ使用時間バブル設定が常に設定画面に表示されます。\n新バージョン初回起動時に変更内容を表示します。\nデバッグモードを追加しました: 設定タイトルのアイコンを4回タップします。\nアプリ名と使用時間診断を改善しました。",
+        pt = "A bolha de uso ao vivo agora fica sempre disponível nas configurações.\nFoi adicionada uma janela de novidades ao abrir uma nova versão.\nModo debug adicionado: toque 4 vezes no ícone de configurações do título.\nNome do app e diagnóstico de uso foram melhorados.",
+        id = "Pengaturan gelembung durasi langsung kini selalu tersedia.\nDialog yang baru ditambahkan untuk versi baru.\nMode debug ditambahkan: ketuk ikon pengaturan di judul 4 kali.\nNama aplikasi dan diagnostik durasi pemakaian diperbaiki."
+    )
 }
 
 private fun minuteLabel(language: AppLanguage): String {

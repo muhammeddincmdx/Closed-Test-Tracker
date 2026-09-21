@@ -10,6 +10,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
@@ -239,18 +240,21 @@ class LiveUsageOverlayService : Service() {
         val events = manager.queryEvents(now - EVENT_LOOKBACK_MILLIS, now)
         val event = UsageEvents.Event()
         val states = linkedMapOf<String, Boolean>()
+        // On API 29+ an activity that loses focus but stays visible (e.g. the
+        // unfocused pane in split-screen) emits ACTIVITY_PAUSED but not
+        // ACTIVITY_STOPPED. Relying on STOPPED to hide keeps both split-screen
+        // panes visible; older versions only report PAUSED/MOVE_TO_BACKGROUND so
+        // there we still treat PAUSED as backgrounded.
+        val usesActivityStopped = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
             if (event.packageName == packageName) continue
             if (trackedApps.none { it.packageName == event.packageName }) continue
             when (event.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED,
-                UsageEvents.Event.MOVE_TO_FOREGROUND -> {
-                    states[event.packageName] = true
-                }
-                UsageEvents.Event.ACTIVITY_PAUSED,
-                UsageEvents.Event.ACTIVITY_STOPPED,
-                UsageEvents.Event.MOVE_TO_BACKGROUND -> states[event.packageName] = false
+                UsageEvents.Event.ACTIVITY_RESUMED -> states[event.packageName] = true
+                UsageEvents.Event.ACTIVITY_STOPPED -> states[event.packageName] = false
+                UsageEvents.Event.ACTIVITY_PAUSED ->
+                    if (!usesActivityStopped) states[event.packageName] = false
             }
         }
         return states
@@ -272,3 +276,4 @@ class LiveUsageOverlayService : Service() {
         return max(aggregate, activeSession)
     }
 }
+

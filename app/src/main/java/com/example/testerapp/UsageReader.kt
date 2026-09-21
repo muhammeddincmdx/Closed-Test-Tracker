@@ -20,6 +20,21 @@ object UsageReader {
     private const val KEY_PENDING_LAUNCH_STARTED_AT = "pending_launch_started_at"
     private const val MIN_MANUAL_SESSION_MILLIS = 10L * 1000L
     private const val MAX_MANUAL_SESSION_MILLIS = 8L * 60L * 60L * 1000L
+
+    // Event-type ints mirror android.app.usage.UsageEvents.Event constants. They
+    // are kept as plain ints so the foreground-folding logic below stays pure and
+    // unit-testable without the Android runtime.
+    private const val EVENT_RESUMED = 1            // ACTIVITY_RESUMED / MOVE_TO_FOREGROUND
+    private const val EVENT_PAUSED = 2             // ACTIVITY_PAUSED / MOVE_TO_BACKGROUND
+    private const val EVENT_STOPPED = 23           // ACTIVITY_STOPPED
+    private const val EVENT_SCREEN_NON_INTERACTIVE = 16
+    private const val EVENT_KEYGUARD_SHOWN = 17
+    private const val EVENT_DEVICE_SHUTDOWN = 26
+
+    // A foreground session that is never closed (dropped PAUSED/STOPPED, e.g. the
+    // screen turned off without an app event) is capped to this length so it can
+    // no longer inflate usage into hours of phantom foreground time.
+    private const val MAX_DANGLING_SESSION_MILLIS = 30L * 60L * 1000L
     fun hasUsageAccess(context: Context): Boolean {
         return runCatching {
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -170,50 +185,110 @@ object UsageReader {
             val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val events = manager.queryEvents(startMillis, endMillis)
             val event = UsageEvents.Event()
-            val totals = linkedMapOf<Long, Long>()
-            var sessionStart: Long? = null
+            val collected = ArrayList<ForegroundSessionEvent>()
 
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
+                val type = event.eventType
                 val belongs = if (includeRelatedPackage) {
                     event.isRelatedToPackage(packageName)
                 } else {
                     event.belongsToPackage(packageName)
                 }
-                if (!belongs) continue
-                when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED,
-                    UsageEvents.Event.MOVE_TO_FOREGROUND -> {
-                        if (sessionStart == null) {
-                            sessionStart = event.timeStamp
-                        }
-                    }
-                    UsageEvents.Event.ACTIVITY_PAUSED,
-                    UsageEvents.Event.ACTIVITY_STOPPED,
-                    UsageEvents.Event.MOVE_TO_BACKGROUND -> {
-                        val startedAt = sessionStart ?: continue
-                        addSessionToDayMap(
-                            totals = totals,
-                            startMillis = startedAt,
-                            endMillis = event.timeStamp.coerceAtMost(endMillis)
-                        )
-                        sessionStart = null
-                    }
-                }
-            }
-
-            sessionStart?.let { startedAt ->
-                addSessionToDayMap(
-                    totals = totals,
-                    startMillis = startedAt,
-                    endMillis = endMillis
+                // Keep the target app's events plus the global screen/keyguard/
+                // shutdown events, which close any dangling foreground session
+                // even though they belong to a different package.
+                val isGlobalCloser = type == EVENT_SCREEN_NON_INTERACTIVE ||
+                    type == EVENT_KEYGUARD_SHOWN ||
+                    type == EVENT_DEVICE_SHUTDOWN
+                if (!belongs && !isGlobalCloser) continue
+                collected += ForegroundSessionEvent(
+                    type = type,
+                    timeStamp = event.timeStamp.coerceAtMost(endMillis),
+                    belongsToTarget = belongs
                 )
             }
 
-            totals.mapValues { (_, totalMillis) ->
-                max(0L, totalMillis / 1000L / 60L)
-            }
+            foldForegroundMillisByDay(collected, endMillis, ::startOfDay)
+                .mapValues { (_, totalMillis) -> max(0L, totalMillis / 1000L / 60L) }
         }.getOrDefault(emptyMap())
+    }
+
+    /** One raw usage event, reduced to only what the foreground fold needs. */
+    internal data class ForegroundSessionEvent(
+        val type: Int,
+        val timeStamp: Long,
+        val belongsToTarget: Boolean
+    )
+
+    /**
+     * Pure foreground-session reducer shared by the event-based usage readers.
+     *
+     * Pairs each `RESUMED` with the next `PAUSED`/`STOPPED` for the target app and
+     * accumulates the elapsed foreground time into per-day buckets. Two robustness
+     * rules prevent the overcounting seen in the field:
+     *  1. A global screen-off / keyguard / device-shutdown event closes any open
+     *     session — Android does not always emit an app `PAUSED` when the screen
+     *     turns off with the app in front, which otherwise left the session open.
+     *  2. A session still open at [windowEnd] is capped to
+     *     [MAX_DANGLING_SESSION_MILLIS], so a dropped close event can no longer
+     *     attribute hours of phantom foreground time up to "now".
+     *
+     * [dayStartOf] maps a timestamp to the start-of-day it belongs to (injected so
+     * the reducer stays free of Android/timezone dependencies for unit testing).
+     */
+    internal fun foldForegroundMillisByDay(
+        events: List<ForegroundSessionEvent>,
+        windowEnd: Long,
+        dayStartOf: (Long) -> Long
+    ): Map<Long, Long> {
+        val totals = linkedMapOf<Long, Long>()
+        var sessionStart: Long? = null
+
+        fun closeAt(endAt: Long) {
+            val startedAt = sessionStart ?: return
+            val end = endAt.coerceAtMost(windowEnd)
+            if (end > startedAt) addMillisToDayMap(totals, startedAt, end, dayStartOf)
+            sessionStart = null
+        }
+
+        for (e in events) {
+            when (e.type) {
+                EVENT_SCREEN_NON_INTERACTIVE,
+                EVENT_KEYGUARD_SHOWN,
+                EVENT_DEVICE_SHUTDOWN -> closeAt(e.timeStamp)
+                else -> {
+                    if (!e.belongsToTarget) continue
+                    when (e.type) {
+                        EVENT_RESUMED -> if (sessionStart == null) sessionStart = e.timeStamp
+                        EVENT_PAUSED, EVENT_STOPPED -> closeAt(e.timeStamp)
+                    }
+                }
+            }
+        }
+
+        sessionStart?.let { startedAt ->
+            val cappedEnd = min(windowEnd, startedAt + MAX_DANGLING_SESSION_MILLIS)
+            if (cappedEnd > startedAt) addMillisToDayMap(totals, startedAt, cappedEnd, dayStartOf)
+        }
+        return totals
+    }
+
+    private fun addMillisToDayMap(
+        totals: MutableMap<Long, Long>,
+        startMillis: Long,
+        endMillis: Long,
+        dayStartOf: (Long) -> Long
+    ) {
+        if (endMillis <= startMillis) return
+        var cursor = startMillis
+        while (cursor < endMillis) {
+            val dayStart = dayStartOf(cursor)
+            val dayEnd = dayStart + DAY_MILLIS
+            val sliceEnd = min(dayEnd, endMillis)
+            totals[dayStart] = (totals[dayStart] ?: 0L) + (sliceEnd - cursor)
+            cursor = sliceEnd
+        }
     }
 
     fun usageMinutesByDayMapFromEventsForDisplay(

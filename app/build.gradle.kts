@@ -1,4 +1,4 @@
-import java.util.Properties
+﻿import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -22,14 +22,14 @@ fun signingSecret(propertyKey: String, envKey: String): String? =
 
 android {
     namespace = "com.mdstudio.closedtesttracker"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.mdstudio.closedtesttracker"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 17
-        versionName = "0.0.21.6"
+        targetSdk = 36
+        versionCode = 21
+        versionName = "0.0.26.07"
         buildConfigField("boolean", "PRO_PREVIEW", providers.gradleProperty("proPreview").orNull ?: "false")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -56,7 +56,8 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            resValue("string", "app_name", "Debug")
+            // Launcher label for debug builds (matches the release app name).
+            resValue("string", "app_name", "TesterApp")
         }
         create("preview") {
             initWith(getByName("release"))
@@ -127,8 +128,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.google.android.play:app-update:2.1.0")
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
     implementation("com.google.android.gms:play-services-ads:23.5.0")
 
     testImplementation("junit:junit:4.13.2")
 }
+

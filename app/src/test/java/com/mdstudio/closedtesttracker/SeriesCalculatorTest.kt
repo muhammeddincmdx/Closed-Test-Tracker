@@ -74,6 +74,20 @@ class SeriesCalculatorTest {
     }
 
     @Test
+    fun currentDay_completionInFuture_isClampedToNow() {
+        // completedAtMillis is in the future relative to "now"; coerceAtMost(now)
+        // means "now" wins, so the day must not jump ahead to the completion date.
+        val app = trackedApp(
+            createdDaysAgo = 2,
+            startDayIndex = 1,
+            completedAtMillis = startOfDay(5) + 6 * 60 * 60 * 1000
+        )
+        // created 2 days ago, started at day 1 -> today (now) is day 3
+        val now = startOfDay(0) + 12 * 60 * 60 * 1000
+        assertEquals(3, SeriesCalculator.currentDay(app, now = now))
+    }
+
+    @Test
     fun dayStartMillisForTestDay_isStartOfDayAndOrdered() {
         val app = trackedApp(createdDaysAgo = 0, startDayIndex = 1)
         val day1 = SeriesCalculator.dayStartMillisForTestDay(app, testDay = 1)
