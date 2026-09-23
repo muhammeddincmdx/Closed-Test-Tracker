@@ -28,8 +28,8 @@ android {
         applicationId = "com.mdstudio.closedtesttracker"
         minSdk = 26
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.0.26.07"
+        versionCode = 22
+        versionName = "0.0.22.09"
         buildConfigField("boolean", "PRO_PREVIEW", providers.gradleProperty("proPreview").orNull ?: "false")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
