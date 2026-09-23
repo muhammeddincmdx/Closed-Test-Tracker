@@ -58,16 +58,47 @@ class UsageReaderFoldTest {
     }
 
     @Test
-    fun danglingSessionWithNoCloser_isCappedToSixHours() {
+    fun danglingSessionWithNoCloser_isCappedToThirtyMinutes() {
         // Resume with no PAUSED/STOPPED/screen event at all; window end is 10 days
-        // out. Must cap at 6h rather than counting 10 days of phantom foreground.
+        // out. Must cap at 30 min rather than counting 10 days of phantom foreground.
         val base = 10L * day
         val windowEnd = base + 10 * day
         val events = listOf(
             UsageReader.ForegroundSessionEvent(RESUMED, base, true)
         )
         val result = UsageReader.foldForegroundMillisByDay(events, windowEnd, dayStartOf)
-        assertEquals(6L * 60L, totalMinutes(result)) // 360 minutes cap
+        assertEquals(30L, totalMinutes(result))
+    }
+
+    @Test
+    fun splashToMain_lateSplashStop_doesNotCloseMainSession() {
+        // Android logs a screen change as: old PAUSED, new RESUMED, old STOPPED.
+        // The late Splash STOPPED must not end the Main screen's session.
+        val base = 10L * day
+        val events = listOf(
+            UsageReader.ForegroundSessionEvent(RESUMED, base, true, "Splash"),
+            UsageReader.ForegroundSessionEvent(PAUSED, base + 1 * minute, true, "Splash"),
+            UsageReader.ForegroundSessionEvent(RESUMED, base + 1 * minute, true, "Main"),
+            UsageReader.ForegroundSessionEvent(STOPPED, base + 2 * minute, true, "Splash"),
+            UsageReader.ForegroundSessionEvent(PAUSED, base + 21 * minute, true, "Main")
+        )
+        val result = UsageReader.foldForegroundMillisByDay(events, base + day, dayStartOf)
+        assertEquals(21L, totalMinutes(result))
+    }
+
+    @Test
+    fun screenOff_closesSession_evenWithSeveralActivitiesResumed() {
+        // Multi-window / split screen: two activities resumed at once. Screen-off
+        // still ends the session.
+        val base = 10L * day
+        val events = listOf(
+            UsageReader.ForegroundSessionEvent(RESUMED, base, true, "A"),
+            UsageReader.ForegroundSessionEvent(RESUMED, base + 1 * minute, true, "B"),
+            UsageReader.ForegroundSessionEvent(PAUSED, base + 3 * minute, true, "A"),
+            UsageReader.ForegroundSessionEvent(SCREEN_NON_INTERACTIVE, base + 5 * minute, false)
+        )
+        val result = UsageReader.foldForegroundMillisByDay(events, base + day, dayStartOf)
+        assertEquals(5L, totalMinutes(result))
     }
 
     @Test

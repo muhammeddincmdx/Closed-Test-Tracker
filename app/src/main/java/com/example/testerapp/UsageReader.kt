@@ -52,9 +52,20 @@ object UsageReader {
         val end = System.currentTimeMillis()
         val eventMinutes = usageMinutesByDayMapFromEventsForDisplay(context, packageName, start, end).values.sum()
         val detected = if (eventMinutes > 0L) eventMinutes else webBackedFallbackMinutes(context, packageName, start, end)
-        val manual = manualUsageMinutesByDayMap(context, packageName, start, end).values.sum()
-        return maxOf(detected, manual)
+        return detected.orElse { manualUsageMinutesByDayMap(context, packageName, start, end).values.sum() }
     }
+
+    /**
+     * Prefers this value and falls back to [other] only when it is zero.
+     *
+     * Usage sources used to be combined with `maxOf`, which always picked the most
+     * inflated one: the manual launch session counts wall-clock time until the
+     * tracker is reopened, and the aggregate query is not clipped to the window.
+     * Sources are now ranked — device events, then aggregate, then the manual
+     * session — and a lower-ranked source is only consulted when the better one
+     * has nothing.
+     */
+    private inline fun Long.orElse(other: () -> Long): Long = if (this > 0L) this else other()
 
     fun markAppLaunched(context: Context, packageName: String) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -105,23 +116,17 @@ object UsageReader {
         dailyTotalMinutes: Long,
         eventTotalMinutes: Long
     ): Long {
+        // The aggregate from the series start still counts: Android drops old usage
+        // events after a few days, so for early test days only the aggregate is
+        // left. A 180-day lookback used to be part of this max, which pulled in
+        // usage from before the test started and always won.
         val now = System.currentTimeMillis()
-        val seriesTotal = bestUsageMinutesBetween(
-            context = context,
-            packageName = packageName,
-            start = seriesStartMillis,
-            end = now,
-            requireRelatedEventForAggregate = true
-        )
-        val lookbackStart = max(0L, now - (TOTAL_LOOKBACK_DAYS * DAY_MILLIS))
-        val lookbackTotal = bestUsageMinutesBetween(
-            context = context,
-            packageName = packageName,
-            start = lookbackStart,
-            end = now,
-            requireRelatedEventForAggregate = true
-        )
-        return maxOf(seriesTotal, lookbackTotal, dailyTotalMinutes, eventTotalMinutes)
+        val seriesAggregate = if (hasRelatedUsageEvent(context, packageName, seriesStartMillis, now)) {
+            usageMinutesBetween(context, packageName, seriesStartMillis, now)
+        } else {
+            0L
+        }
+        return maxOf(seriesAggregate, dailyTotalMinutes, eventTotalMinutes)
     }
 
     fun usageMinutesByDayMap(
@@ -169,7 +174,9 @@ object UsageReader {
         val manual = manualUsageMinutesByDayMap(context, packageName, startMillis, endMillis)
         if (aggregate.isEmpty() && events.isEmpty()) return manual
         return (aggregate.keys + events.keys + manual.keys).associateWith { dayStart ->
-            maxOf(aggregate[dayStart] ?: 0L, events[dayStart] ?: 0L, manual[dayStart] ?: 0L)
+            (events[dayStart] ?: 0L)
+                .orElse { aggregate[dayStart] ?: 0L }
+                .orElse { manual[dayStart] ?: 0L }
         }
     }
 
@@ -205,7 +212,8 @@ object UsageReader {
                 collected += ForegroundSessionEvent(
                     type = type,
                     timeStamp = event.timeStamp.coerceAtMost(endMillis),
-                    belongsToTarget = belongs
+                    belongsToTarget = belongs,
+                    className = event.className
                 )
             }
 
@@ -218,7 +226,9 @@ object UsageReader {
     internal data class ForegroundSessionEvent(
         val type: Int,
         val timeStamp: Long,
-        val belongsToTarget: Boolean
+        val belongsToTarget: Boolean,
+        /** Activity the event is about; separates screens of the same app. */
+        val className: String? = null
     )
 
     /**
@@ -234,6 +244,13 @@ object UsageReader {
      *     [MAX_DANGLING_SESSION_MILLIS], so a dropped close event can no longer
      *     attribute hours of phantom foreground time up to "now".
      *
+     * The app counts as foreground while **at least one of its activities** is
+     * resumed. Pairing any RESUMED with any PAUSED/STOPPED is not enough: moving
+     * from a splash screen to the main screen is logged as
+     * `Splash RESUMED → Splash PAUSED → Main RESUMED → Splash STOPPED`, and the late
+     * `Splash STOPPED` used to close the main screen's session right after it
+     * opened — apps with more than one screen read as 0 minutes.
+     *
      * [dayStartOf] maps a timestamp to the start-of-day it belongs to (injected so
      * the reducer stays free of Android/timezone dependencies for unit testing).
      */
@@ -244,8 +261,10 @@ object UsageReader {
     ): Map<Long, Long> {
         val totals = linkedMapOf<Long, Long>()
         var sessionStart: Long? = null
+        val resumedActivities = HashSet<String>()
 
         fun closeAt(endAt: Long) {
+            resumedActivities.clear()
             val startedAt = sessionStart ?: return
             val end = endAt.coerceAtMost(windowEnd)
             if (end > startedAt) addMillisToDayMap(totals, startedAt, end, dayStartOf)
@@ -259,9 +278,16 @@ object UsageReader {
                 EVENT_DEVICE_SHUTDOWN -> closeAt(e.timeStamp)
                 else -> {
                     if (!e.belongsToTarget) continue
+                    val activity = e.className.orEmpty()
                     when (e.type) {
-                        EVENT_RESUMED -> if (sessionStart == null) sessionStart = e.timeStamp
-                        EVENT_PAUSED, EVENT_STOPPED -> closeAt(e.timeStamp)
+                        EVENT_RESUMED -> {
+                            if (sessionStart == null) sessionStart = e.timeStamp
+                            resumedActivities += activity
+                        }
+                        EVENT_PAUSED, EVENT_STOPPED -> {
+                            resumedActivities -= activity
+                            if (resumedActivities.isEmpty()) closeAt(e.timeStamp)
+                        }
                     }
                 }
             }
@@ -319,8 +345,7 @@ object UsageReader {
                 includeRelatedPackage = isLikelyWebBackedApp(context, packageName)
             ).values.sum()
             val detected = if (eventMinutes > 0L) eventMinutes else webBackedFallbackMinutes(context, packageName, start, end)
-            val manual = manualUsageMinutesByDayMap(context, packageName, start, end).values.sum()
-            maxOf(detected, manual)
+            detected.orElse { manualUsageMinutesByDayMap(context, packageName, start, end).values.sum() }
         }
     }
 
@@ -396,18 +421,13 @@ object UsageReader {
                     ).values.sum()
                     val hasUsageEvent = eventMinutes > 0L || hasRelatedUsageEvent(context, packageName, start, end)
                     val safeAggregate = if (!requireRelatedEventForAggregate || hasUsageEvent) aggregateMinutes else 0L
-                    val direct = maxOf(
-                        safeAggregate,
-                        eventMinutes
-                    )
+                    val direct = eventMinutes.orElse { safeAggregate }
                     val detected = if (direct > 0L) direct else webBackedFallbackMinutes(context, packageName, start, end)
-                    val manual = manualUsageMinutesByDayMap(context, packageName, start, end).values.sum()
-                    maxOf(detected, manual)
+                    detected.orElse { manualUsageMinutesByDayMap(context, packageName, start, end).values.sum() }
                 } else {
                     val hasUsageEvent = !requireRelatedEventForAggregate || hasRelatedUsageEvent(context, packageName, start, end)
                     val detected = if (aggregateMinutes > 0L && hasUsageEvent) aggregateMinutes else webBackedFallbackMinutes(context, packageName, start, end)
-                    val manual = manualUsageMinutesByDayMap(context, packageName, start, end).values.sum()
-                    maxOf(detected, manual)
+                    detected.orElse { manualUsageMinutesByDayMap(context, packageName, start, end).values.sum() }
                 }
             }
         }.getOrDefault(packageNames.associateWith { 0L })
@@ -429,10 +449,9 @@ object UsageReader {
         ).values.sum()
         val hasUsageEvent = events > 0L || hasRelatedUsageEvent(context, packageName, start, end)
         val safeAggregate = if (!requireRelatedEventForAggregate || hasUsageEvent) aggregate else 0L
-        val direct = maxOf(safeAggregate, events)
+        val direct = events.orElse { safeAggregate }
         val detected = if (direct > 0L) direct else webBackedFallbackMinutes(context, packageName, start, end)
-        val manual = manualUsageMinutesByDayMap(context, packageName, start, end).values.sum()
-        return maxOf(detected, manual)
+        return detected.orElse { manualUsageMinutesByDayMap(context, packageName, start, end).values.sum() }
     }
 
     private fun usageMinutesBetween(
