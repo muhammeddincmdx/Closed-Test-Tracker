@@ -1,0 +1,34 @@
+# Runs the JVM unit tests on every push to main and on pull requests.
+# GitHub emails the pusher when a run fails; nothing to do while it stays green.
+name: Unit tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The wrapper was committed from Windows without the executable bit.
+      - run: chmod +x gradlew
+
+      - run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: app/build/reports/tests/
