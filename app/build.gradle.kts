@@ -28,8 +28,10 @@ android {
         applicationId = "com.mdstudio.closedtesttracker"
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
-        versionName = "0.0.23.09"
+        // Sürüm = çıkış tarihi + o günün sırası: YY.AA.GG.NN (aynı gün ikinci
+        // sürüm .02 olur). versionCode aynı sayının noktasız hâli.
+        versionCode = 26092401
+        versionName = "26.09.24.01"
         buildConfigField("boolean", "PRO_PREVIEW", providers.gradleProperty("proPreview").orNull ?: "false")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
